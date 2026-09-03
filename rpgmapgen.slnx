@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="rpgmapgen/rpgmapgen.csproj" />
+  <Project Path="RPGMapGeneration/RPGMapGeneration.csproj" />
+</Solution>

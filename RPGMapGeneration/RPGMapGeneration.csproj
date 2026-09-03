@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- netstandard2.1 is what Unity 6.x IL2CPP players consume. -->
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>RPGMapGeneration</RootNamespace>
+    <AssemblyName>RPGMapGeneration</AssemblyName>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Documenting every public member is not worth the noise for a port. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Unity-side helper scripts, not part of the library. -->
+    <Compile Remove="Tools/**" />
+    <None Include="Tools/**" />
+  </ItemGroup>
+
+</Project>
