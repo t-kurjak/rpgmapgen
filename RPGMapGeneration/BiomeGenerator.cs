@@ -24,34 +24,6 @@ namespace RPGMapGeneration
             }
         }
 
-        public struct GroundTypeBlend
-        {
-            public byte biomeA;
-            public byte biomeB;
-            public float blend;
-
-            public GroundTypeBlend(byte biomeA, byte biomeB, float blend)
-            {
-                this.biomeA = biomeA;
-                this.biomeB = biomeB;
-                this.blend = blend;
-            }
-        }
-
-        public enum GroundType
-        {
-            Mud = 0,
-            Grass = 1,
-            Rock = 2,
-            Sand = 3,
-            Snow = 4,
-            Ice = 5,
-            TreeMeadow = 6,
-            TreeForest = 7,
-            TreeSwamp = 8,
-            TreeMountain = 9
-        }
-
         private static int terrainTextureSize;
         private static float terrainTextureWorldSize;
 
@@ -72,8 +44,8 @@ namespace RPGMapGeneration
         /// </summary>
         public static Rgba32Image? BiomeTexture => biomeTexture;
 
-        private static GroundType[] groundData = System.Array.Empty<GroundType>();
-        private static GroundTypeBlend[] groundBlendData = System.Array.Empty<GroundTypeBlend>();
+        private static byte[] biomeData = System.Array.Empty<byte>();
+        private static BiomeBlend[] biomeBlendData = System.Array.Empty<BiomeBlend>();
 
         private static int numberOfBiomes = 3;
 
@@ -84,16 +56,18 @@ namespace RPGMapGeneration
             biomeTexture = GenerateBiomes(textureSize: textureSize, biomeCount: numberOfBiomes, seed: 12345);
         }
 
-        public static GroundType GetGroundTypeAtPosition(float x, float z)
+        /// <summary>Dominant biome at a world position, <c>0</c> .. <c>15</c>.</summary>
+        public static byte GetBiomeAtPosition(float x, float z)
         {
-            return groundData[GetTextureIndex(x, z)];
+            return biomeData[GetTextureIndex(x, z)];
         }
 
-        public static GroundTypeBlend GetGroundBlendAtPosition(float x, float z)
+        /// <summary>Biome pair and blend weight at a world position.</summary>
+        public static BiomeBlend GetBiomeBlendAtPosition(float x, float z)
         {
             int index = GetTextureIndex(x, z);
 
-            return groundBlendData[index];
+            return biomeBlendData[index];
         }
 
         private static Rgba32Image GenerateBiomes(int textureSize, int biomeCount, int seed)
@@ -103,8 +77,8 @@ namespace RPGMapGeneration
                 textureSize
             );
 
-            groundData = new GroundType[textureSize * textureSize];
-            groundBlendData = new GroundTypeBlend[textureSize * textureSize];
+            biomeData = new byte[textureSize * textureSize];
+            biomeBlendData = new BiomeBlend[textureSize * textureSize];
 
             List<BiomePoint> biomePoints = GenerateBiomePoints(
                 textureSize,
@@ -205,9 +179,9 @@ namespace RPGMapGeneration
 
                     biomeTexture.SetPixel(x, z, GetBiomeColor(closestBiome));
 
-                    groundData[GetTextureIndex(x, z)] = (GroundType)closestBiome;
+                    biomeData[GetTextureIndex(x, z)] = (byte)closestBiome;
 
-                    groundBlendData[GetTextureIndexPixel(x, z)] = new GroundTypeBlend((byte)closestBiome, (byte)secondClosestBiome, blend);
+                    biomeBlendData[GetTextureIndexPixel(x, z)] = new BiomeBlend((byte)closestBiome, (byte)secondClosestBiome, blend);
                 }
             }
 

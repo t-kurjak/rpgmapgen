@@ -14,7 +14,8 @@ Unity provided is reimplemented here.
 | `MapGenerator.cs` | Entry point: `GenerateMap`, `LoadMap`. |
 | `BiomeGenerator.cs` | Voronoi-ish biome layout with Perlin-distorted borders. |
 | `HeightTextureGenerator.cs` | Terrain height/normal generation and the packed texture bake. Formerly `HeightGenerator`. |
-| `HeightTextureSampler.cs` | Reads height, normal, biome and blend back out of the texture. |
+| `HeightTextureSampler.cs` | Reads height, normal, biome and blend back out of the texture, and stamps modifier volumes into it. |
+| `BiomeBlend.cs` | The biome pair plus the blend weight between them - the only ground description in the format. |
 | `Numerics/` | `Vector2`, `Vector3`, `Color`, `Color32`, `Bounds`, `Ray`, `RaycastHit`, `Mathf`. |
 | `Compat/` | Bit-exact ports of Unity's random generator and Perlin noise, plus a parity harness. |
 | `Imaging/` | `Rgba32Image` (stands in for `Texture2D`) and a self-contained PNG codec. |
@@ -32,6 +33,11 @@ Unchanged from the Unity version. One RGBA8 PNG, one pixel per terrain sample:
 | A | Height, `0` .. `maxHeight` |
 
 Normal Y is reconstructed from X and Z on read.
+
+Ground is described by G and B together and by nothing else. There is no ground type byte
+and no forest flag - a sample is a pair of biomes plus a weight, which is what `BiomeBlend`
+carries. `HeightTextureSampler.GetDominantBiome` picks whichever side of the blend owns the
+pixel when a single value is needed.
 
 Pixel arrays keep Unity's bottom-up layout (index `0` is the bottom-left pixel,
 `index = y * width + x`), and the PNG codec performs the same vertical flip on write and
@@ -82,12 +88,17 @@ cannot come along, so it now takes `IEnumerable<ITerrainModifier>`: implement th
 on the Unity side with a small adapter that exposes `Collider.bounds` and forwards to
 `Collider.Raycast`, and do the null/enabled/`TerrainModifier` filtering before calling.
 
-Two quirks of the original survive the port on purpose, because changing them would change
-the texture the shader reads:
+The write path uses the same channel layout as the bake, so a stamped pixel is
+indistinguishable from a generated one: normal X and Z go into R as nibbles, height into A,
+and `ITerrainModifier.BiomeOverride` becomes both halves of the biome pair in G with a blend
+of `0` in B, which reads back as a solid biome.
 
-- the height/normal write encodes normal X and Z as full bytes in R and G, not as the packed
-  nibbles the generator produces;
-- the ground type write replaces the blend byte in B.
+The Unity original wrote normal X and Z as full bytes into R and G, and stamped a
+`GroundType` enum over the blend byte in B - both left over from an earlier layout where B
+held a ground type in the low 7 bits and a forest flag in the top one. That layout is gone;
+`GroundType`, `GroundTypeBlend` and the flag masks went with it. A Unity side
+`TerrainModifier` that still exposes a ground type has to map it to a biome index (`0` ..
+`15`) in the adapter.
 
 ## Verifying parity with Unity
 

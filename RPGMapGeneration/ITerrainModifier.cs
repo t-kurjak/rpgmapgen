@@ -21,8 +21,12 @@ namespace RPGMapGeneration
         /// <summary>Whether the volume writes its surface height and normal into the texture.</summary>
         bool OverrideHeight { get; }
 
-        /// <summary>Ground type stamped into the texture wherever the volume is hit.</summary>
-        BiomeGenerator.GroundType GroundOverride { get; }
+        /// <summary>
+        /// Biome stamped into the texture wherever the volume is hit, <c>0</c> .. <c>15</c>.
+        /// The pixel ends up as that biome on both sides of the blend, so it reads back as
+        /// solid. Values outside the range are clamped.
+        /// </summary>
+        byte BiomeOverride { get; }
 
         /// <summary>
         /// Casts a ray against this volume only, equivalent to <c>Collider.Raycast</c>.

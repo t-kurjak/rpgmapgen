@@ -179,7 +179,7 @@ namespace RPGMapGeneration
                     // Biome information
                     // ---------------------------------------------------------
 
-                    var biomeBlend = BiomeGenerator.GetGroundBlendAtPosition(worldX, worldZ);
+                    var biomeBlend = BiomeGenerator.GetBiomeBlendAtPosition(worldX, worldZ);
 
                     biomeBlend.biomeA = (byte)Mathf.Clamp(biomeBlend.biomeA, 0, 15);
                     biomeBlend.biomeB = (byte)Mathf.Clamp(biomeBlend.biomeB, 0, 15);
@@ -220,7 +220,8 @@ namespace RPGMapGeneration
             return texture;
         }
 
-        private static int EncodeNormalComponent4Bit(float value)
+        /// <summary>Encodes one normal component from [-1, 1] into the [0, 15] nibble the R channel stores.</summary>
+        internal static int EncodeNormalComponent4Bit(float value)
         {
             return Mathf.Clamp(Mathf.RoundToInt((value * 0.5f + 0.5f) * 15.0f), 0, 15);
         }

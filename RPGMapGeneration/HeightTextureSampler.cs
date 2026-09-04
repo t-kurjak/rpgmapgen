@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using RPGMapGeneration.Diagnostics;
 using RPGMapGeneration.Imaging;
 using RPGMapGeneration.Numerics;
-using static RPGMapGeneration.BiomeGenerator;
 
 namespace RPGMapGeneration
 {
@@ -17,23 +16,6 @@ namespace RPGMapGeneration
         private static int terrainTextureSize;
         private static float terrainTextureWorldSize;
         private static float terrainTextureMaxHeight;
-
-        private const byte GroundTypeMask = 0x7F;
-        private const byte ForestFlagMask = 0x80;
-
-        public struct BiomeBlend
-        {
-            public byte biomeA;
-            public byte biomeB;
-            public float blend;
-
-            public BiomeBlend(byte biomeA, byte biomeB, float blend)
-            {
-                this.biomeA = biomeA;
-                this.biomeB = biomeB;
-                this.blend = blend;
-            }
-        }
 
         /// <summary>Size in pixels of the currently loaded texture.</summary>
         public static int TextureSize => terrainTextureSize;
@@ -141,7 +123,12 @@ namespace RPGMapGeneration
             return new BiomeBlend(biomeA, biomeB, blend);
         }
 
-        public static byte GetGroundType(float x, float z)
+        /// <summary>
+        /// The biome that owns more than half of the sample. There is no single ground type
+        /// any more, so this is the closest thing to one: whichever side of
+        /// <see cref="BiomeBlend.blend"/> the pixel falls on.
+        /// </summary>
+        public static byte GetDominantBiome(float x, float z)
         {
             BiomeBlend biome = GetBiomeBlend(x, z);
 
@@ -177,11 +164,10 @@ namespace RPGMapGeneration
         /// out as a PNG.
         /// </summary>
         /// <remarks>
-        /// Ported verbatim from the Unity version, so two quirks of the original survive: the
-        /// height/normal write uses a full 8 bit encoding of normal X and Z in R and G rather
-        /// than the packed nibble format the generator produces, and the ground type write
-        /// replaces the blend byte in B. Change them only together with the shader that reads
-        /// the texture.
+        /// The writes use the same channel layout <see cref="HeightTextureGenerator"/> bakes,
+        /// so a stamped pixel reads back through <see cref="GetTerrainNormal"/> and
+        /// <see cref="GetBiomeBlend"/> like any generated one: normal X and Z packed as
+        /// nibbles in R, the biome pair in G, the blend in B, height in A.
         /// </remarks>
         public static void ApplyColliderModifications(IEnumerable<ITerrainModifier> modifiers, float worldSize, float maxHeight, string filePath)
         {
@@ -203,7 +189,7 @@ namespace RPGMapGeneration
                 }
 
                 bool overrideHeight = modifier.OverrideHeight;
-                GroundType groundOverride = modifier.GroundOverride;
+                byte biomeOverride = (byte)Mathf.Clamp(modifier.BiomeOverride, 0, 15);
 
                 Bounds bounds = modifier.Bounds;
 
@@ -259,7 +245,7 @@ namespace RPGMapGeneration
                             SetHeightAndNormal(terrainTextureData, index, hit.point.y, hit.normal, maxHeight);
                         }
 
-                        SetGroundType(terrainTextureData, index, groundOverride);
+                        SetBiome(terrainTextureData, index, biomeOverride);
                     }
                 }
             }
@@ -275,11 +261,16 @@ namespace RPGMapGeneration
         {
             Color32 pixel = pixels[index];
 
-            pixel.r = (byte)Mathf.Clamp(Mathf.RoundToInt((normal.x * 0.5f + 0.5f) * 255.0f), 0, 255);
+            int normalX4 = HeightTextureGenerator.EncodeNormalComponent4Bit(normal.x);
+            int normalZ4 = HeightTextureGenerator.EncodeNormalComponent4Bit(normal.z);
 
-            pixel.g = (byte)Mathf.Clamp(Mathf.RoundToInt((normal.z * 0.5f + 0.5f) * 255.0f), 0, 255);
+            // R:
+            // High nibble = normal X
+            // Low nibble  = normal Z
+            pixel.r = (byte)((normalX4 << 4) | normalZ4);
 
-            // Keep pixel.b untouched because it contains ground type/forest.
+            // Keep pixel.g and pixel.b untouched, they carry the biome pair and the blend
+            // between them. SetBiome is what writes those.
 
             pixel.a = (byte)Mathf.Clamp(
                 Mathf.RoundToInt(
@@ -292,10 +283,22 @@ namespace RPGMapGeneration
             pixels[index] = pixel;
         }
 
-        private static void SetGroundType(Color32[] pixels, int index, GroundType groundType)
+        /// <summary>
+        /// Stamps a single biome over a pixel by making it both halves of the biome pair, so
+        /// the blend has nothing left to interpolate towards.
+        /// </summary>
+        private static void SetBiome(Color32[] pixels, int index, byte biome)
         {
             Color32 pixel = pixels[index];
-            pixel.b = (byte)groundType;
+
+            // G:
+            // High nibble = biome A
+            // Low nibble  = biome B
+            pixel.g = (byte)((biome << 4) | biome);
+
+            // B: 0 = all biome A.
+            pixel.b = 0;
+
             pixels[index] = pixel;
         }
 
