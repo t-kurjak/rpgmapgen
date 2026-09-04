@@ -100,16 +100,22 @@ without the `out` is unchanged and reports the mismatch through `MapLog` only;
 number afterwards.
 
 Inside Unity you can keep shipping the texture as an imported asset and skip the PNG
-decoder entirely:
+decoder entirely. `Tools/MapTextureInterop.cs` is the one piece of glue that needs to live in
+the Unity project - `UnityEngine.Color32` and `RPGMapGeneration.Numerics.Color32` are the
+same four bytes but not the same type, so the pixel array is copied across once:
 
 ```csharp
 Texture2D asset = Resources.Load<Texture2D>("terrain");
 
+// Convert(UnityEngine.Color32[]) -> RPGMapGeneration.Numerics.Color32[]
 HeightTextureSampler.InitializeTextureData(
-    Convert(asset.GetPixels32()),   // UnityEngine.Color32[] -> RPGMapGeneration.Numerics.Color32[]
+    MapTextureInterop.Convert(asset.GetPixels32()),
     asset.width,
     worldSize,
     maxHeight);
+
+// ...or the whole thing at once, which also hands back the map format version:
+int version = MapTextureInterop.Load(asset, worldSize, maxHeight);
 ```
 
 The importer must leave the pixels alone: uncompressed, no sRGB conversion, no mipmaps,
