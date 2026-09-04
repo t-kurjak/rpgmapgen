@@ -72,11 +72,12 @@ namespace RPGMapGeneration.Cli
             if (!options.Quiet)
             {
                 Console.WriteLine(Format(
-                    "Generating {0}x{1} texture over {2} world units, max height {3}.",
+                    "Generating {0}x{1} texture over {2} world units, max height {3}, map format version {4}.",
                     options.TextureSize,
                     options.TextureSize,
                     MapGenerator.WorldSize,
-                    MapGenerator.MaximumHeight));
+                    MapGenerator.MaximumHeight,
+                    MapFormat.CurrentVersion));
             }
 
             Stopwatch stopwatch = Stopwatch.StartNew();

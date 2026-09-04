@@ -1,3 +1,4 @@
+using System;
 using RPGMapGeneration.Compat;
 using RPGMapGeneration.Diagnostics;
 using RPGMapGeneration.Imaging;
@@ -147,6 +148,11 @@ namespace RPGMapGeneration
         /// </summary>
         public static Rgba32Image GenerateTerrainNormalHeightTexture(int textureSize, float worldSize, float maxHeight = 50.0f)
         {
+            if (textureSize < 2)
+            {
+                throw new ArgumentOutOfRangeException(nameof(textureSize), "The terrain texture must be at least 2 pixels across, because the first pixel carries the format header.");
+            }
+
             Rgba32Image texture = new Rgba32Image(textureSize, textureSize);
 
             Color32[] pixels = new Color32[textureSize * textureSize];
@@ -214,6 +220,9 @@ namespace RPGMapGeneration
                     pixels[z * textureSize + x] = new Color32(packedNormal, packedBiomes, blendByte, heightByte);
                 }
             }
+
+            // The first pixel gives up its map data to carry the format version instead.
+            pixels[MapFormat.HeaderPixelIndex] = MapFormat.CreateHeader(MapFormat.CurrentVersion);
 
             texture.SetPixels32(pixels);
 

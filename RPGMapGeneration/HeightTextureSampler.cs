@@ -16,9 +16,17 @@ namespace RPGMapGeneration
         private static int terrainTextureSize;
         private static float terrainTextureWorldSize;
         private static float terrainTextureMaxHeight;
+        private static int loadedMapVersion;
 
         /// <summary>Size in pixels of the currently loaded texture.</summary>
         public static int TextureSize => terrainTextureSize;
+
+        /// <summary>
+        /// Map format version of the currently loaded texture, read from its header pixel.
+        /// <see cref="MapFormat.UnversionedVersion"/> for a texture written before the header
+        /// existed.
+        /// </summary>
+        public static int LoadedMapVersion => loadedMapVersion;
 
         /// <summary>
         /// Loads the packed terrain texture from a PNG file.
@@ -60,6 +68,11 @@ namespace RPGMapGeneration
                 throw new ArgumentNullException(nameof(pixels));
             }
 
+            if (textureSize < 2)
+            {
+                throw new ArgumentOutOfRangeException(nameof(textureSize), "The terrain texture must be at least 2 pixels across, because the first pixel carries the format header.");
+            }
+
             if (pixels.Length != textureSize * textureSize)
             {
                 throw new ArgumentException("The terrain texture must be square and match the given size.", nameof(pixels));
@@ -69,6 +82,15 @@ namespace RPGMapGeneration
             terrainTextureWorldSize = worldSize;
             terrainTextureMaxHeight = maxHeight;
             terrainTextureData = pixels;
+
+            loadedMapVersion = MapFormat.ReadVersion(pixels[MapFormat.HeaderPixelIndex]);
+
+            string? mismatch = MapFormat.DescribeMismatch(loadedMapVersion);
+
+            if (mismatch != null)
+            {
+                MapLog.Log(mismatch);
+            }
         }
 
         public static float GetTerrainHeight(float x, float z)
@@ -146,7 +168,13 @@ namespace RPGMapGeneration
 
             int texZ = Mathf.Clamp(Mathf.RoundToInt(v * (terrainTextureSize - 1)), 0, terrainTextureSize - 1);
 
-            return texZ * terrainTextureSize + texX;
+            int index = texZ * terrainTextureSize + texX;
+
+            // The first pixel holds the format header rather than map data, so the single
+            // world corner that lands on it samples its right hand neighbour instead.
+            return index == MapFormat.HeaderPixelIndex
+                ? MapFormat.HeaderPixelIndex + 1
+                : index;
         }
 
         public static float GetR16HeightAtPixel(int x, int y, Color[] data, float maxHeight)
@@ -168,6 +196,9 @@ namespace RPGMapGeneration
         /// so a stamped pixel reads back through <see cref="GetTerrainNormal"/> and
         /// <see cref="GetBiomeBlend"/> like any generated one: normal X and Z packed as
         /// nibbles in R, the biome pair in G, the blend in B, height in A.
+        ///
+        /// The header pixel is left exactly as it was loaded, so the saved texture keeps the
+        /// version it came with rather than claiming a version it was not written in.
         /// </remarks>
         public static void ApplyColliderModifications(IEnumerable<ITerrainModifier> modifiers, float worldSize, float maxHeight, string filePath)
         {
@@ -232,6 +263,10 @@ namespace RPGMapGeneration
                         }
 
                         int index = z * textureSize + x;
+
+                        // Never stamp over the format header.
+                        if (index == MapFormat.HeaderPixelIndex)
+                            continue;
 
                         // Decode existing height from alpha.
                         float existingHeight = terrainTextureData[index].a / 255.0f * maxHeight;

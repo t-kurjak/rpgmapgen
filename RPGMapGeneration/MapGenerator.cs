@@ -38,6 +38,13 @@ namespace RPGMapGeneration
         public static float WorldSize => worldVertexCount * worldVertexSpacing;
 
         /// <summary>
+        /// Map format version of the texture that <see cref="LoadMap(string)"/> loaded last.
+        /// <see cref="MapFormat.UnversionedVersion"/> for a texture written before the header
+        /// existed.
+        /// </summary>
+        public static int LoadedMapVersion => HeightTextureSampler.LoadedMapVersion;
+
+        /// <summary>
         /// Generates biomes and terrain and writes the packed texture to
         /// <paramref name="texturePath"/>.
         /// </summary>
@@ -51,9 +58,29 @@ namespace RPGMapGeneration
         /// Loads a previously generated texture so that <see cref="HeightTextureSampler"/> can
         /// be queried.
         /// </summary>
+        /// <remarks>
+        /// A texture that is not <see cref="MapFormat.CurrentVersion"/> still loads and can
+        /// still be sampled; the mismatch is reported through
+        /// <see cref="Diagnostics.MapLog.Info"/>. Use the
+        /// <see cref="LoadMap(string, out int)"/> overload to decide what to do about it.
+        /// </remarks>
         public static Rgba32Image LoadMap(string texturePath)
         {
-            return HeightTextureSampler.InitializeTextureData(texturePath, worldVertexCount * worldVertexSpacing, maximumHeight);
+            return LoadMap(texturePath, out _);
+        }
+
+        /// <summary>
+        /// Loads a previously generated texture and reports which map format version it was
+        /// written in. Compare it against <see cref="MapFormat.CurrentVersion"/>, or ask
+        /// <see cref="MapFormat.IsCurrent"/> and <see cref="MapFormat.DescribeMismatch"/>.
+        /// </summary>
+        public static Rgba32Image LoadMap(string texturePath, out int mapVersion)
+        {
+            Rgba32Image texture = HeightTextureSampler.InitializeTextureData(texturePath, worldVertexCount * worldVertexSpacing, maximumHeight);
+
+            mapVersion = HeightTextureSampler.LoadedMapVersion;
+
+            return texture;
         }
     }
 }

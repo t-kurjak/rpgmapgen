@@ -16,6 +16,7 @@ Unity provided is reimplemented here.
 | `HeightTextureGenerator.cs` | Terrain height/normal generation and the packed texture bake. Formerly `HeightGenerator`. |
 | `HeightTextureSampler.cs` | Reads height, normal, biome and blend back out of the texture, and stamps modifier volumes into it. |
 | `BiomeBlend.cs` | The biome pair plus the blend weight between them - the only ground description in the format. |
+| `MapFormat.cs` | Format version, and the header pixel that carries it. |
 | `Numerics/` | `Vector2`, `Vector3`, `Color`, `Color32`, `Bounds`, `Ray`, `RaycastHit`, `Mathf`. |
 | `Compat/` | Bit-exact ports of Unity's random generator and Perlin noise, plus a parity harness. |
 | `Imaging/` | `Rgba32Image` (stands in for `Texture2D`) and a self-contained PNG codec. |
@@ -23,7 +24,7 @@ Unity provided is reimplemented here.
 
 ## Texture format
 
-Unchanged from the Unity version. One RGBA8 PNG, one pixel per terrain sample:
+One RGBA8 PNG, one pixel per terrain sample:
 
 | Channel | Contents |
 | --- | --- |
@@ -38,6 +39,31 @@ Ground is described by G and B together and by nothing else. There is no ground 
 and no forest flag - a sample is a pair of biomes plus a weight, which is what `BiomeBlend`
 carries. `HeightTextureSampler.GetDominantBiome` picks whichever side of the blend owns the
 pixel when a single value is needed.
+
+### Version header
+
+Pixel `0` - the bottom-left one - gives up its map data to say which format the texture is
+in:
+
+| Channel | Contents |
+| --- | --- |
+| R, G | Magic `0x52 0x4D` |
+| B | Format version, currently `1` |
+| A | One's complement of B |
+
+The magic plus the complement is what separates a real header from a terrain pixel that
+happens to look like one, so a texture written before the header existed reports
+`MapFormat.UnversionedVersion` (`0`) rather than a wrong version. The version is never `0`,
+so "no header" and "version 0" cannot be confused.
+
+Nothing else moves: the remaining pixels are the same samples at the same indices as before.
+Only the one world corner that maps onto pixel `0` changes meaning, and the sampler reads its
+neighbour there instead, so no caller ever sees header bytes as terrain. Textures must be at
+least 2 pixels across.
+
+`ApplyColliderModifications` skips the header pixel and writes back whatever version the
+texture was loaded with, so re-saving a pre-header texture does not make it claim a version
+it was not written in.
 
 Pixel arrays keep Unity's bottom-up layout (index `0` is the bottom-left pixel,
 `index = y * width + x`), and the PNG codec performs the same vertical flip on write and
@@ -54,12 +80,24 @@ using RPGMapGeneration;
 
 MapGenerator.GenerateMap("terrain.png", textureSize: 1024);
 
-MapGenerator.LoadMap("terrain.png");
+MapGenerator.LoadMap("terrain.png", out int mapVersion);
+
+if (!MapFormat.IsCurrent(mapVersion))
+{
+    // MapFormat.DescribeMismatch(mapVersion) is the same sentence MapLog already reported.
+    Debug.LogWarning(MapFormat.DescribeMismatch(mapVersion));
+}
 
 float height = HeightTextureSampler.GetTerrainHeight(worldX, worldZ);
 var normal   = HeightTextureSampler.GetTerrainNormal(worldX, worldZ);
 var blend    = HeightTextureSampler.GetBiomeBlend(worldX, worldZ);
 ```
+
+An out-of-date texture still loads and still samples - it is a warning, not an error, since
+the channel layout has not changed between versions so far. The `LoadMap(string)` overload
+without the `out` is unchanged and reports the mismatch through `MapLog` only;
+`MapGenerator.LoadedMapVersion` and `HeightTextureSampler.LoadedMapVersion` expose the same
+number afterwards.
 
 Inside Unity you can keep shipping the texture as an imported asset and skip the PNG
 decoder entirely:
@@ -75,7 +113,12 @@ HeightTextureSampler.InitializeTextureData(
 ```
 
 The importer must leave the pixels alone: uncompressed, no sRGB conversion, no mipmaps,
-read/write enabled. Otherwise the packed nibbles are destroyed.
+read/write enabled. Otherwise the packed nibbles are destroyed - and so is the header, which
+is the first thing that will tell you the importer is wrong: an asset that reports
+`UnversionedVersion` after being baked by this library was mangled on import.
+
+That overload reads the header as well, so `HeightTextureSampler.LoadedMapVersion` is set
+whichever way the pixels arrive.
 
 `RPGMapGeneration.Diagnostics.MapLog.Info` replaces `Debug.Log` and is silent until you
 assign a handler.
