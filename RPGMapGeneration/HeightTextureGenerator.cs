@@ -1,26 +1,27 @@
-using System;
 using RPGMapGeneration.Compat;
-using RPGMapGeneration.Diagnostics;
+using RPGMapGeneration.Generation;
 using RPGMapGeneration.Imaging;
 using RPGMapGeneration.Numerics;
 
 namespace RPGMapGeneration
 {
     /// <summary>
-    /// Generates a terrain from scratch and bakes it into the packed RGBA texture that
-    /// <see cref="HeightTextureSampler"/> reads back.
+    /// Process-wide convenience wrapper around <see cref="TerrainHeightSource"/> and the bake.
     /// </summary>
     /// <remarks>
-    /// This is the former <c>HeightGenerator</c> from the Unity project. The noise, island
-    /// falloff and packing arithmetic are unchanged.
+    /// This was the former <c>HeightGenerator</c> from the Unity project. The surface itself now
+    /// lives in <see cref="TerrainHeightSource"/>, which is a pure function of its settings, and
+    /// the packing in <see cref="TerrainMap"/>. What is left here is the static entry points and
+    /// the noise origin that <see cref="Initialize"/> randomises.
     /// </remarks>
     public static class HeightTextureGenerator
     {
         private static float dimensions;
         private static float seed;
 
-        private static float xOffset = 1000.0f;
-        private static float zOffset = 1000.0f;
+        private static TerrainHeightSource? cachedSource;
+        private static TerrainNoiseSettings? cachedNoise;
+        private static IslandSettings? cachedIsland;
 
         /// <summary>World size the generator was last initialised with.</summary>
         public static float Dimensions => dimensions;
@@ -29,7 +30,8 @@ namespace RPGMapGeneration
         public static float Seed => seed;
 
         /// <summary>
-        /// Randomises the sampling origin of the noise field.
+        /// Randomises the sampling origin of the noise field on
+        /// <see cref="MapGenerator.Settings"/>.
         /// </summary>
         /// <remarks>
         /// Just like in Unity this draws from the shared random generator rather than from
@@ -41,198 +43,80 @@ namespace RPGMapGeneration
         {
             dimensions = newDimensions;
             seed = newSeed;
-            xOffset = UnityRandom.Value * 10000.0f;
-            zOffset = UnityRandom.Value * 10000.0f;
+
+            TerrainNoiseSettings noise = MapGenerator.Settings.TerrainNoise;
+
+            noise.OriginX = UnityRandom.Value * 10000.0f;
+            noise.OriginZ = UnityRandom.Value * 10000.0f;
         }
 
+        /// <summary>Terrain height in world units at a world position.</summary>
         public static float GetTerrainHeight(float x, float z)
         {
-            x += xOffset;
-            z += zOffset;
-
-            // Base parameters for noise
-            float baseNoiseScale = 0.0125f;
-            float baseNoiseAmplitude = 50.0f;
-            int baseOctaves = 4;
-            float basePersistence = 0.5f;
-            float baseLacunarity = 2.0f;
-
-            float baseHeight = GetNoise(x, z, baseNoiseScale, baseNoiseAmplitude, baseOctaves, basePersistence, baseLacunarity);
-
-            float islandSlope = GetIslandSlope(x, z);
-            float islandCutoff = Mathf.Clamp01((int)(GetNoise(x, z, 0.001f, 5.0f, 8, 0.5f, 2.0f) * 1.3f * (1.0f - islandSlope)) - 1) * (1.0f - islandSlope);
-
-            baseHeight = Mathf.Max(0.0f, (baseHeight - islandCutoff * 50.0f) * islandSlope);
-
-            return baseHeight;
+            return CurrentSource().GetHeight(x, z);
         }
 
+        /// <summary>Surface normal at a world position.</summary>
         public static Vector3 GetTerrainNormal(float x, float z, float sampleDistance = 0.2f)
         {
-            float hL = GetTerrainHeight(x - sampleDistance, z);
-            float hR = GetTerrainHeight(x + sampleDistance, z);
-            float hD = GetTerrainHeight(x, z - sampleDistance);
-            float hU = GetTerrainHeight(x, z + sampleDistance);
-
-            return new Vector3(
-                hL - hR,
-                2f * sampleDistance,
-                hD - hU
-            ).Normalized;
+            return CurrentSource().GetNormal(x, z, sampleDistance);
         }
 
-        private static float GetIslandSlope(float x, float z)
-        {
-            Vector2 distanceToCenter = new Vector2(x - xOffset, z - zOffset);
-            float fallOff = Mathf.Max(0.0f, Mathf.Min(1.0f, (1200.0f - distanceToCenter.Magnitude) * 0.001f));
-            return fallOff;
-        }
-
-        private static float GetNoise(float x, float z, float scale, float amplitude, int octaves, float persistence, float lacunarity)
-        {
-            float total = 0;
-            float frequency = 1;
-            float amplitudeAcc = 1;
-            float maxValue = 0;
-
-            for (int i = 0; i < octaves; i++)
-            {
-                total += Mathf.PerlinNoise(x * scale * frequency, z * scale * frequency) * amplitude * amplitudeAcc;
-                maxValue += amplitudeAcc;
-
-                amplitudeAcc *= persistence;
-                frequency *= lacunarity;
-            }
-
-            return total / maxValue;
-        }
-
-        private static float GetRiverValue(float x, float z)
-        {
-            float riverNoiseScale = 0.005f;
-            float riverDepth = 10.0f;
-
-            float riverValue = Mathf.Sin(x * riverNoiseScale) * Mathf.Sin(z * riverNoiseScale) * riverDepth;
-            return riverValue;
-        }
-
-        private static float ApplyErosion(float height, float x, float z)
-        {
-            // Simple erosion effect
-            float erosionStrength = 0.1f;
-
-            float left = GetNoise(x - 1, z, 0.05f, 5.0f, 4, 0.5f, 2.0f);
-            float right = GetNoise(x + 1, z, 0.05f, 5.0f, 4, 0.5f, 2.0f);
-            float up = GetNoise(x, z + 1, 0.05f, 5.0f, 4, 0.5f, 2.0f);
-            float down = GetNoise(x, z - 1, 0.05f, 5.0f, 4, 0.5f, 2.0f);
-
-            float slope = (left + right + up + down) / 4 - height;
-            height += slope * erosionStrength;
-
-            return height;
-        }
-
+        /// <summary>Bakes the packed terrain texture and writes it out as a PNG.</summary>
         public static void SaveTerrainNormalHeightTexture(string filePath, int textureSize, float worldSize, float maxHeight = 50.0f)
         {
-            Rgba32Image texture = GenerateTerrainNormalHeightTexture(textureSize, worldSize, maxHeight);
-
-            texture.SavePng(filePath);
-
-            MapLog.Log($"Terrain normal/biome/height texture saved to: {filePath}");
+            GenerateTerrainNormalHeightTextureMap(textureSize, worldSize, maxHeight).Save(filePath);
         }
 
         /// <summary>
-        /// Builds the packed terrain texture in memory. <see cref="SaveTerrainNormalHeightTexture"/>
-        /// is this plus a PNG write, split apart so the data can also be used without touching
-        /// the file system.
+        /// Builds the packed terrain texture in memory.
+        /// <see cref="SaveTerrainNormalHeightTexture"/> is this plus a PNG write, split apart so
+        /// the data can also be used without touching the file system.
         /// </summary>
         public static Rgba32Image GenerateTerrainNormalHeightTexture(int textureSize, float worldSize, float maxHeight = 50.0f)
         {
-            if (textureSize < 2)
-            {
-                throw new ArgumentOutOfRangeException(nameof(textureSize), "The terrain texture must be at least 2 pixels across, because the first pixel carries the format header.");
-            }
-
-            Rgba32Image texture = new Rgba32Image(textureSize, textureSize);
-
-            Color32[] pixels = new Color32[textureSize * textureSize];
-
-            float sampleSpacing = worldSize / textureSize;
-
-            for (int z = 0; z < textureSize; z++)
-            {
-                for (int x = 0; x < textureSize; x++)
-                {
-                    float worldX = (x + 0.5f) * sampleSpacing - worldSize * 0.5f;
-
-                    float worldZ = (z + 0.5f) * sampleSpacing - worldSize * 0.5f;
-
-                    // ---------------------------------------------------------
-                    // Terrain normal
-                    // ---------------------------------------------------------
-
-                    Vector3 normal = GetTerrainNormal(worldX, worldZ);
-
-                    int normalX4 = EncodeNormalComponent4Bit(normal.x);
-                    int normalZ4 = EncodeNormalComponent4Bit(normal.z);
-
-                    // R:
-                    // High nibble = normal X
-                    // Low nibble  = normal Z
-                    byte packedNormal = (byte)((normalX4 << 4) | normalZ4);
-
-                    // ---------------------------------------------------------
-                    // Biome information
-                    // ---------------------------------------------------------
-
-                    var biomeBlend = BiomeGenerator.GetBiomeBlendAtPosition(worldX, worldZ);
-
-                    biomeBlend.biomeA = (byte)Mathf.Clamp(biomeBlend.biomeA, 0, 15);
-                    biomeBlend.biomeB = (byte)Mathf.Clamp(biomeBlend.biomeB, 0, 15);
-
-                    // G:
-                    // High nibble = biome A
-                    // Low nibble  = biome B
-                    byte packedBiomes = (byte)((biomeBlend.biomeA << 4) | biomeBlend.biomeB);
-
-                    // B:
-                    // 0   = 100% biome A
-                    // 255 = 100% biome B
-                    byte blendByte = (byte)Mathf.RoundToInt(Mathf.Clamp01(biomeBlend.blend) * 255.0f);
-
-                    // ---------------------------------------------------------
-                    // Height
-                    // ---------------------------------------------------------
-
-                    float height = GetTerrainHeight(worldX, worldZ);
-
-                    byte heightByte = (byte)Mathf.RoundToInt(Mathf.Clamp01(height / maxHeight) * 255.0f);
-
-                    // ---------------------------------------------------------
-                    // Final texture pixel
-                    //
-                    // R = Normal X4 + Z4
-                    // G = Biome A4 + B4
-                    // B = Blend8
-                    // A = Height8
-                    // ---------------------------------------------------------
-
-                    pixels[z * textureSize + x] = new Color32(packedNormal, packedBiomes, blendByte, heightByte);
-                }
-            }
-
-            // The first pixel gives up its map data to carry the format version instead.
-            pixels[MapFormat.HeaderPixelIndex] = MapFormat.CreateHeader(MapFormat.CurrentVersion);
-
-            texture.SetPixels32(pixels);
-
-            return texture;
+            return GenerateTerrainNormalHeightTextureMap(textureSize, worldSize, maxHeight).ToImage();
         }
 
-        /// <summary>Encodes one normal component from [-1, 1] into the [0, 15] nibble the R channel stores.</summary>
-        internal static int EncodeNormalComponent4Bit(float value)
+        /// <summary>
+        /// Builds the packed terrain texture as a <see cref="TerrainMap"/>, which is what the
+        /// rest of the library would rather have than a bare image.
+        /// </summary>
+        /// <remarks>
+        /// The biome field has to exist already: <see cref="BiomeGenerator.InitializeTextureData"/>
+        /// runs before a bake, and <see cref="MapGenerator.Generate"/> does both in order.
+        /// </remarks>
+        public static TerrainMap GenerateTerrainNormalHeightTextureMap(int textureSize, float worldSize, float maxHeight = 50.0f)
         {
-            return Mathf.Clamp(Mathf.RoundToInt((value * 0.5f + 0.5f) * 15.0f), 0, 15);
+            BiomeField? biomeField = BiomeGenerator.CurrentField;
+
+            if (biomeField == null)
+            {
+                throw new System.InvalidOperationException("The biome pass has to run before the terrain bake. Call BiomeGenerator.InitializeTextureData or MapGenerator.Generate first.");
+            }
+
+            return TerrainMap.FromBake(CurrentSource(), biomeField, textureSize, worldSize, maxHeight);
+        }
+
+        /// <summary>
+        /// The height source for <see cref="MapGenerator.Settings"/>, rebuilt only when the
+        /// settings objects it reads are replaced.
+        /// </summary>
+        private static TerrainHeightSource CurrentSource()
+        {
+            MapGenerationSettings settings = MapGenerator.Settings;
+
+            if (cachedSource == null
+                || !ReferenceEquals(cachedNoise, settings.TerrainNoise)
+                || !ReferenceEquals(cachedIsland, settings.Island))
+            {
+                cachedNoise = settings.TerrainNoise;
+                cachedIsland = settings.Island;
+
+                cachedSource = new TerrainHeightSource(cachedNoise, cachedIsland);
+            }
+
+            return cachedSource;
         }
     }
 }

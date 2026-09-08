@@ -68,6 +68,15 @@ namespace RPGMapGeneration.Cli
             MapGenerator.WorldVertexCountPerDimension = options.VertexCount;
             MapGenerator.WorldVertexSpacing = options.VertexSpacing;
             MapGenerator.MaximumHeight = options.MaxHeight;
+            MapGenerator.Seed = options.Seed;
+
+            if (!options.Quiet)
+            {
+                foreach (string warning in MapGenerator.Settings.DescribeWarnings())
+                {
+                    Console.WriteLine("warning: " + warning);
+                }
+            }
 
             if (!options.Quiet)
             {
@@ -133,6 +142,7 @@ Options:
       --vertex-count <n>     Terrain vertices per axis. Default 128.
       --vertex-spacing <n>   World units between vertices. Default 8.
       --max-height <value>   Height that a stored alpha of 255 maps to. Default 127.5.
+      --seed <n>             Seed for the biome region scatter. Default 12345.
       --biome-preview <path> Also write the human readable biome layout to this PNG.
   -q, --quiet                Suppress progress output.
   -h, --help                 Show this help.
@@ -157,6 +167,8 @@ Examples:
             public int VertexSpacing { get; private set; } = MapGenerator.WorldVertexSpacing;
 
             public float MaxHeight { get; private set; } = MapGenerator.MaximumHeight;
+
+            public int Seed { get; private set; } = MapGenerator.Seed;
 
             public string? BiomePreviewPath { get; private set; }
 
@@ -209,6 +221,10 @@ Examples:
 
                         case "--max-height":
                             options.MaxHeight = ParseFloat(NextValue(args, ref i, arg), arg);
+                            break;
+
+                        case "--seed":
+                            options.Seed = ParseInt(NextValue(args, ref i, arg), arg);
                             break;
 
                         case "--biome-preview":
@@ -270,6 +286,16 @@ Examples:
                 if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) || value <= 0)
                 {
                     throw new ArgumentException($"'{option}' needs a positive whole number, got '{text}'.");
+                }
+
+                return value;
+            }
+
+            private static int ParseInt(string text, string option)
+            {
+                if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+                {
+                    throw new ArgumentException($"'{option}' needs a whole number, got '{text}'.");
                 }
 
                 return value;

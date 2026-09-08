@@ -4,17 +4,26 @@ Procedural terrain generation extracted from a Unity project into a standalone
 `netstandard2.1` library, so the same world can be generated and sampled inside Unity
 (6.x, IL2CPP), in a tool, or in a test.
 
-The generation logic is a straight port: none of the arithmetic was changed. Everything
+The library is the single source of truth for terrain: the game, the CLI and any content
+tool generate and sample through it rather than each reimplementing the logic. Everything
 Unity provided is reimplemented here.
+
+A bake is described entirely by a `MapGenerationSettings`, so the same settings always
+produce the same map - which is what lets an editor's preview and the game's bake agree.
+Generation parameters are free to change between versions; the *texture format* below is the
+part that stays fixed, because stored maps and shaders depend on it.
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| `MapGenerator.cs` | Entry point: `GenerateMap`, `LoadMap`. |
-| `BiomeGenerator.cs` | Voronoi-ish biome layout with Perlin-distorted borders. |
-| `HeightTextureGenerator.cs` | Terrain height/normal generation and the packed texture bake. Formerly `HeightGenerator`. |
-| `HeightTextureSampler.cs` | Reads height, normal, biome and blend back out of the texture, and stamps modifier volumes into it. |
+| `TerrainMap.cs` | **The main type.** One packed texture: generate, save, load, sample, stamp modifiers. |
+| `Generation/` | `MapGenerationSettings` and its parts, the biome pass (`BiomeFieldGenerator`, `BiomeField`) and the terrain surface (`TerrainHeightSource`). |
+| `MapPacking.cs` | The single encoder/decoder for the four channels. Everything that packs or unpacks goes through it. |
+| `MapGenerator.cs` | Static facade: one settings object and one map, process-wide. |
+| `BiomeGenerator.cs` | Static facade over one `BiomeField`. |
+| `HeightTextureGenerator.cs` | Static facade over one `TerrainHeightSource` and the bake. Formerly `HeightGenerator`. |
+| `HeightTextureSampler.cs` | Static facade over one loaded `TerrainMap`. |
 | `BiomeBlend.cs` | The biome pair plus the blend weight between them - the only ground description in the format. |
 | `MapFormat.cs` | Format version, and the header pixel that carries it. |
 | `Numerics/` | `Vector2`, `Vector3`, `Color`, `Color32`, `Bounds`, `Ray`, `RaycastHit`, `Mathf`. |
@@ -77,21 +86,55 @@ build differ between encoders. The decoded pixels are what is guaranteed.
 
 ```csharp
 using RPGMapGeneration;
+using RPGMapGeneration.Generation;
 
+var settings = new MapGenerationSettings { Seed = 12345 };
+settings.World.MaximumHeight = 127.5f;
+settings.BiomeLayout.BiomeCount = 4;
+
+TerrainMap map = TerrainMap.Generate(settings, textureSize: 1024);
+map.Save("terrain.png");
+
+TerrainMap loaded = TerrainMap.Load("terrain.png", settings.World.Size, settings.World.MaximumHeight);
+
+if (!MapFormat.IsCurrent(loaded.Version))
+{
+    // MapFormat.DescribeMismatch is the same sentence MapLog already reported.
+    Debug.LogWarning(MapFormat.DescribeMismatch(loaded.Version));
+}
+
+float height      = loaded.SampleHeight(worldX, worldZ);
+var normal        = loaded.SampleNormal(worldX, worldZ);
+var ground        = loaded.SampleBiomeBlend(worldX, worldZ);
+byte dominant     = loaded.SampleDominantBiome(worldX, worldZ);
+
+// The raw nibbles, for callers that would rather decode them themselves.
+loaded.SampleNormalNibbles(worldX, worldZ, out int normalX4, out int normalZ4);
+```
+
+`settings.Validate()` throws on values that cannot work - more than 16 biomes, a height
+ceiling of zero. `settings.DescribeWarnings()` returns the softer problems as sentences a
+tool can display: an island falloff that overruns the world, terrain that cannot reach the
+height ceiling, more biome regions than the scatter can pack in.
+
+Because a `TerrainMap` owns its pixels, a tool can hold several at once - a low resolution
+preview beside the full bake it is about to replace. For a game with a single world, the
+static facades are shorter:
+
+```csharp
+MapGenerator.Seed = 12345;
 MapGenerator.GenerateMap("terrain.png", textureSize: 1024);
 
 MapGenerator.LoadMap("terrain.png", out int mapVersion);
-
-if (!MapFormat.IsCurrent(mapVersion))
-{
-    // MapFormat.DescribeMismatch(mapVersion) is the same sentence MapLog already reported.
-    Debug.LogWarning(MapFormat.DescribeMismatch(mapVersion));
-}
 
 float height = HeightTextureSampler.GetTerrainHeight(worldX, worldZ);
 var normal   = HeightTextureSampler.GetTerrainNormal(worldX, worldZ);
 var blend    = HeightTextureSampler.GetBiomeBlend(worldX, worldZ);
 ```
+
+Everything on `MapGenerator`, `BiomeGenerator`, `HeightTextureGenerator` and
+`HeightTextureSampler` reads and writes one process-wide slot, so the two styles should not
+be mixed for the same world.
 
 An out-of-date texture still loads and still samples - it is a warning, not an error, since
 the channel layout has not changed between versions so far. The `LoadMap(string)` overload
@@ -137,7 +180,10 @@ cannot come along, so it now takes `IEnumerable<ITerrainModifier>`: implement th
 on the Unity side with a small adapter that exposes `Collider.bounds` and forwards to
 `Collider.Raycast`, and do the null/enabled/`TerrainModifier` filtering before calling.
 
-The write path uses the same channel layout as the bake, so a stamped pixel is
+`TerrainMap.ApplyModifiers` is the same thing on an instance, without the process-wide slot
+or the implicit save.
+
+The write path shares one encoder (`MapPacking`) with the bake, so a stamped pixel is
 indistinguishable from a generated one: normal X and Z go into R as nibbles, height into A,
 and `ITerrainModifier.BiomeOverride` becomes both halves of the biome pair in G with a blend
 of `0` in B, which reads back as a solid biome.
@@ -153,8 +199,12 @@ held a ground type in the low 7 bits and a forest flag in the top one. That layo
 
 `Mathf.PerlinNoise` and `UnityEngine.Random` are native code, so their exact behaviour
 cannot be observed from outside a Unity runtime. Both are reimplemented in `Compat/`
-(`UnityPerlin`, `UnityRandom`, `XorShift128`) from Unity's algorithms, and both are the only
-things standing between this library and the terrain your game already has.
+(`UnityPerlin`, `UnityRandom`, `XorShift128`) from Unity's algorithms.
+
+Matching Unity bit for bit is a convenience rather than a requirement now that this library
+is the source of truth rather than a mirror of one: these are a replaceable implementation
+detail. The parity harness is still the quickest way to explain why a map baked by an older
+Unity build differs from one baked here.
 
 To confirm:
 

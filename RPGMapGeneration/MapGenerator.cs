@@ -1,41 +1,63 @@
+using RPGMapGeneration.Generation;
 using RPGMapGeneration.Imaging;
 
 namespace RPGMapGeneration
 {
     /// <summary>
-    /// Entry point that ties the biome pass, the texture bake and the runtime sampler
-    /// together.
+    /// Process-wide convenience wrapper around <see cref="TerrainMap"/>, holding one settings
+    /// object and one loaded map.
     /// </summary>
+    /// <remarks>
+    /// This is the shape the Unity original had and the shape a game with a single world still
+    /// wants. Anything that needs more than one world at a time - a map editor, a preview next
+    /// to a final bake, a test - should use <see cref="TerrainMap"/> and
+    /// <see cref="MapGenerationSettings"/> directly instead, because everything here writes to
+    /// static state.
+    /// </remarks>
     public static class MapGenerator
     {
-        private static int worldVertexCount = 128;
-        private static int worldVertexSpacing = 8;
+        private static MapGenerationSettings settings = new MapGenerationSettings();
 
-        private static float maximumHeight = 127.5f;
+        /// <summary>
+        /// The settings every generate call on this class uses. Replacing it replaces the
+        /// world that <see cref="GenerateMap"/> will bake.
+        /// </summary>
+        public static MapGenerationSettings Settings
+        {
+            get => settings;
+            set => settings = value ?? new MapGenerationSettings();
+        }
 
         /// <summary>Number of terrain vertices along one axis.</summary>
         public static int WorldVertexCountPerDimension
         {
-            get => worldVertexCount;
-            set => worldVertexCount = value;
+            get => settings.World.VertexCountPerDimension;
+            set => settings.World.VertexCountPerDimension = value;
         }
 
         /// <summary>World units between two neighbouring terrain vertices.</summary>
         public static int WorldVertexSpacing
         {
-            get => worldVertexSpacing;
-            set => worldVertexSpacing = value;
+            get => settings.World.VertexSpacing;
+            set => settings.World.VertexSpacing = value;
         }
 
         /// <summary>Height that the packed alpha channel's 255 maps to.</summary>
         public static float MaximumHeight
         {
-            get => maximumHeight;
-            set => maximumHeight = value;
+            get => settings.World.MaximumHeight;
+            set => settings.World.MaximumHeight = value;
+        }
+
+        /// <summary>Seed for the biome region scatter.</summary>
+        public static int Seed
+        {
+            get => settings.Seed;
+            set => settings.Seed = value;
         }
 
         /// <summary>Edge length of the world in world units.</summary>
-        public static float WorldSize => worldVertexCount * worldVertexSpacing;
+        public static float WorldSize => settings.World.Size;
 
         /// <summary>
         /// Map format version of the texture that <see cref="LoadMap(string)"/> loaded last.
@@ -45,13 +67,25 @@ namespace RPGMapGeneration
         public static int LoadedMapVersion => HeightTextureSampler.LoadedMapVersion;
 
         /// <summary>
-        /// Generates biomes and terrain and writes the packed texture to
-        /// <paramref name="texturePath"/>.
+        /// Generates biomes and terrain from <see cref="Settings"/> and writes the packed
+        /// texture to <paramref name="texturePath"/>.
         /// </summary>
         public static void GenerateMap(string texturePath, int textureSize)
         {
-            BiomeGenerator.InitializeTextureData(WorldVertexSpacing * WorldVertexCountPerDimension, textureSize);
-            HeightTextureGenerator.SaveTerrainNormalHeightTexture(texturePath, textureSize, worldVertexCount * worldVertexSpacing, maximumHeight);
+            Generate(textureSize).Save(texturePath);
+        }
+
+        /// <summary>
+        /// Generates from <see cref="Settings"/> without writing anything, publishing the biome
+        /// field to <see cref="BiomeGenerator"/> on the way so the preview is available.
+        /// </summary>
+        public static TerrainMap Generate(int textureSize)
+        {
+            TerrainMap map = TerrainMap.Generate(settings, textureSize, out BiomeField biomeField);
+
+            BiomeGenerator.SetCurrentField(biomeField);
+
+            return map;
         }
 
         /// <summary>
@@ -76,11 +110,24 @@ namespace RPGMapGeneration
         /// </summary>
         public static Rgba32Image LoadMap(string texturePath, out int mapVersion)
         {
-            Rgba32Image texture = HeightTextureSampler.InitializeTextureData(texturePath, worldVertexCount * worldVertexSpacing, maximumHeight);
+            TerrainMap map = Load(texturePath);
 
-            mapVersion = HeightTextureSampler.LoadedMapVersion;
+            mapVersion = map.Version;
 
-            return texture;
+            return map.ToImage();
+        }
+
+        /// <summary>
+        /// Loads a previously generated texture and makes it the map this class and
+        /// <see cref="HeightTextureSampler"/> sample.
+        /// </summary>
+        public static TerrainMap Load(string texturePath)
+        {
+            TerrainMap map = TerrainMap.Load(texturePath, settings.World.Size, settings.World.MaximumHeight);
+
+            HeightTextureSampler.SetCurrentMap(map);
+
+            return map;
         }
     }
 }
