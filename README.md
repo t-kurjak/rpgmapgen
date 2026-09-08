@@ -18,7 +18,7 @@ part that stays fixed, because stored maps and shaders depend on it.
 | Path | Purpose |
 | --- | --- |
 | `TerrainMap.cs` | **The main type.** One packed texture: generate, save, load, sample, stamp modifiers. |
-| `Generation/` | `MapGenerationSettings` and its parts, the biome pass (`BiomeFieldGenerator`, `BiomeField`) and the terrain surface (`TerrainHeightSource`). |
+| `Generation/` | `MapGenerationSettings` and its parts, the island pass (`IslandMask`), the biome pass (`BiomeFieldGenerator`, `BiomeField`) and the terrain surface (`TerrainHeightSource`). |
 | `MapPacking.cs` | The single encoder/decoder for the four channels. Everything that packs or unpacks goes through it. |
 | `MapGenerator.cs` | Static facade: one settings object and one map, process-wide. |
 | `BiomeGenerator.cs` | Static facade over one `BiomeField`. |
@@ -111,6 +111,47 @@ byte dominant     = loaded.SampleDominantBiome(worldX, worldZ);
 // The raw nibbles, for callers that would rather decode them themselves.
 loaded.SampleNormalNibbles(worldX, worldZ, out int normalX4, out int normalZ4);
 ```
+
+## Island shape
+
+Generation runs in three passes: the island mask decides where land is, the biome pass decides
+what is on it, and the bake writes the packed texture. Hoisting the coastline out in front is
+what lets both later passes agree on where the sea starts.
+
+The island is a superellipse with a noise-warped coastline, and every distance is a fraction
+of the world's half extent so the shape survives a resize:
+
+| Setting | Effect |
+| --- | --- |
+| `RadiusFraction` | Shoreline radius as a fraction of the world's half extent. |
+| `Squareness` | Superellipse exponent. `2` is a circle, which can only cover about 79% of a square map; `4` is a rounded square covering about 93%. This is the knob for filling a square world without looking like a disc in a box. |
+| `ShoreBand` | Width of the ramp from shoreline to sea level - broader beaches, shallower approaches. |
+| `BayStrength`, `BayScale` | Large scale coastline warp: bays and headlands. The scale wants to produce a handful of features across the world; too low and the coast is one smooth bulge. |
+| `CoastBias` | How concentrated the erosion is. `1` eats into the whole coastline evenly, which costs a lot of area for a mere wobble; higher leaves most of the coast at full radius and digs a few deep inlets instead. |
+| `CoastDetail`, `CoastDetailScale` | Fine fractal roughness. Large values start detaching islets offshore. |
+| `BorderMargin` | Hard limit past which the mask is forced to zero, so land never reaches the map border whatever the noise did. |
+
+The coast warp only ever cuts *inwards*, which is what makes `RadiusFraction` a bound the
+island cannot cross rather than an average it wanders either side of. The furthest headland
+sits exactly on that radius and every bay is dug in from it, so containment is structural
+rather than something to check for afterwards.
+
+The seed shifts the coast warp, the terrain relief and the biome scatter, so a new seed is a
+new world rather than the same hills behind a different shore.
+
+`IslandMask.Measure()` samples the mask and reports the land fraction and whether land touches
+the border, which is what the warnings below are based on:
+
+```csharp
+var mask = new IslandMask(settings.Island, settings.Seed, settings.World.Size);
+
+IslandCoverage coverage = mask.Measure();
+
+Console.WriteLine($"{coverage.LandFraction:P0} land, touches border: {coverage.TouchesBorder}");
+```
+
+With the defaults that is 70-75% land on a 1024 unit world, water all the way around, and
+`BorderFraction` zero on every seed tried.
 
 `settings.Validate()` throws on values that cannot work - more than 16 biomes, a height
 ceiling of zero. `settings.DescribeWarnings()` returns the softer problems as sentences a

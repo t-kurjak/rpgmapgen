@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using RPGMapGeneration.Numerics;
 
 namespace RPGMapGeneration.Generation
 {
@@ -91,9 +90,29 @@ namespace RPGMapGeneration.Generation
                 throw new ArgumentOutOfRangeException(nameof(TerrainNoise), "The normal sample distance must be greater than zero.");
             }
 
-            if (Island.CutoffOctaves < 1)
+            if (Island.BayOctaves < 1 || Island.CoastDetailOctaves < 1)
             {
-                throw new ArgumentOutOfRangeException(nameof(Island), "The island cutoff noise needs at least one octave.");
+                throw new ArgumentOutOfRangeException(nameof(Island), "The island coast noise needs at least one octave.");
+            }
+
+            if (Island.CoastBias < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(Island), "The coast bias is a whole power and must be at least 1.");
+            }
+
+            if (Island.RadiusFraction <= 0.0f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(Island), "The island radius must be greater than zero.");
+            }
+
+            if (Island.Squareness < 1.0f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(Island), "The superellipse exponent must be at least 1; below that the shape turns concave and stops being an island outline.");
+            }
+
+            if (Island.ShoreBand <= 0.0f || Island.ShoreBand >= 1.0f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(Island), "The shore band is a fraction of the island radius and must lie in (0, 1).");
             }
         }
 
@@ -104,13 +123,23 @@ namespace RPGMapGeneration.Generation
         /// </summary>
         public IEnumerable<string> DescribeWarnings()
         {
-            float halfExtent = World.Size * 0.5f;
+            // Measure the actual island rather than guessing from the settings: the coast
+            // warp is fractal noise whose worst case is far outside what it ever reaches.
+            IslandCoverage coverage = new IslandMask(Island, Seed, World.Size).Measure();
 
-            float cornerDistance = halfExtent * Mathf.Sqrt(2.0f);
-
-            if (Island.FalloffRadius > cornerDistance)
+            if (coverage.BorderFraction > 0.02f)
             {
-                yield return $"The island falloff reaches zero at {Island.FalloffRadius} units, past the world's far corner at {cornerDistance:F0}. Land will run off the map edge instead of being surrounded by water.";
+                yield return $"The island runs past the map border along {coverage.BorderFraction:P0} of it and is being cut off by IslandSettings.BorderMargin, which leaves a straight edge there. Lower the radius, the bay strength or the coast detail.";
+            }
+
+            if (coverage.LandFraction < 0.35f)
+            {
+                yield return $"The island covers only {coverage.LandFraction:P0} of the map. Raise the radius or the squareness to use more of the world.";
+            }
+
+            if (coverage.LandFraction > 0.95f)
+            {
+                yield return $"The island covers {coverage.LandFraction:P0} of the map, so there is almost no sea around it.";
             }
 
             float reachableHeight = TerrainNoise.Amplitude;

@@ -24,6 +24,8 @@ namespace RPGMapGeneration.Numerics
 
         public static float Sqrt(float f) => (float)Math.Sqrt(f);
 
+        public static float Pow(float f, float p) => (float)Math.Pow(f, p);
+
         public static float Sin(float f) => (float)Math.Sin(f);
 
         public static float Cos(float f) => (float)Math.Cos(f);

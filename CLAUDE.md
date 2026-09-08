@@ -55,7 +55,7 @@ so regenerate and byte-compare:
 dotnet run --project rpgmapgen -- -o rpgmapgen/output/check.png -s 4096
 ```
 
-That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 5c3b3a9f…` for the
+That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 15d08cc6…` for the
 default settings and a version 1 header). This is a *reproducibility* check, not a parity
 check against Unity: the same settings must always give the same bytes, because a tool's
 preview and the game's bake have to agree. A difference after a refactor that was meant to
@@ -63,9 +63,10 @@ preserve behaviour is a bug. A difference after an intentional change to generat
 expected — regenerate the reference in the same commit. If the only differing pixel is index
 0, the checked-in file simply predates the version header and wants regenerating rather than
 investigating.
-`rpgmapgen/output/unity_reference_testgen.png` is the same world baked by Unity itself; the
-decoded pixels are what should match, not the compressed bytes (filter choice and zlib build
-differ between encoders).
+`rpgmapgen/output/unity_reference_testgen.png` is the world the Unity project baked back when
+this library still mirrored it. It no longer matches anything current — the island pass alone
+changed the whole surface — so treat it as a historical artifact, not a fixture. It is still
+the quickest way to see what the original generator produced.
 
 **2. A throwaway console project for everything else.** For the sampler, the modifier stamp
 path or the version header, create a scratch console app outside the repo, `dotnet add
@@ -145,11 +146,32 @@ public *fields* rather than properties so Unity's `JsonUtility` and inspector ca
 the softer problems — an island falloff that overruns the world, terrain that cannot reach the
 height ceiling, more biome regions than the scatter can pack — as strings a tool can show.
 
-The generation pipeline is two passes and both halves are instances:
-`BiomeFieldGenerator.Generate` produces a `BiomeField`, which the bake then samples.
-`TerrainHeightSource` is a pure function of its settings — nothing cached, nothing mutated —
-which is what makes previews at another resolution, partial re-bakes and parallel baking
-possible. Keep it that way.
+The generation pipeline is three passes, and every one of them is an instance:
+
+1. **`IslandMask`** — where the land is. A superellipse (`Squareness`: 2 is a circle covering
+   only ~79% of a square map, 4 a rounded square covering ~93%) whose coastline is eroded by
+   two scales of noise, plus a hard `BorderMargin` as a backstop. Everything is a fraction of
+   the world's half extent, so the shape survives a resize.
+
+   The erosion only ever cuts inwards. That is the load-bearing decision: it makes
+   `RadiusFraction` a bound rather than an average, so containment is structural. A symmetric
+   warp pushes the coast out as often as in, and then no radius small enough to guarantee
+   containment leaves enough land to be worth having — measured, every radius that gave more
+   than 60% land also clipped. `CoastBias` then concentrates the erosion into a few deep
+   inlets instead of nibbling the whole coast, which is what buys back the area: the defaults
+   hold 70-75% land with zero clipping.
+2. **`BiomeFieldGenerator.Generate` → `BiomeField`** — which biomes are where.
+3. **The bake in `TerrainMap`** — samples `TerrainHeightSource` and the biome field into the
+   packed texture.
+
+`IslandMask` and `TerrainHeightSource` are pure functions of their settings — nothing cached,
+nothing mutated — which is what makes previews at another resolution, partial re-bakes and
+parallel baking possible. Keep them that way.
+
+`IslandMask.Measure()` samples the mask on a coarse grid and reports the land fraction and
+whether land touches the border. Prefer measuring to reasoning about the settings: the coast
+warp is fractal noise whose theoretical worst case is far outside what it ever reaches, so a
+static bound on the shape is uselessly pessimistic.
 
 `MapGenerator`, `BiomeGenerator`, `HeightTextureGenerator` and `HeightTextureSampler` are now
 thin static facades over one process-wide settings object, biome field and map. They exist
@@ -185,18 +207,15 @@ header reading as `UnversionedVersion`.
 
 Measured from the checked-in 4096 bake, so that these are not mistaken for design intent:
 
-- **The island overruns the map.** `IslandSettings.FalloffRadius` is 1200 units but the world
-  is 1024 across, with its far corner at 724. Only 0.2% of the map is water and 96% of the
-  border ring bakes above sea level. The defaults describe a much larger world than the one
-  they are used with.
 - **The biome layout depends on the bake resolution.** `BiomeLayoutSettings` is still measured
   in texture pixels, so the same seed at 512 and 1024 agrees on only ~80% of positions. Moving
   it to world units is a prerequisite for letting terrain height depend on the biome.
 - **The terrain pass does not read the biome yet.** `TerrainHeightSource` is one global noise
   field; the two-pass pipeline exists but phase 2 ignores phase 1. Per-biome elevation is the
   point of the `BiomeField` being handed to the bake.
-- **Height uses about a third of its range.** Terrain reaches 45.5 of the 127.5 units the
-  alpha channel encodes.
+- **Height uses about a third of its range.** Terrain reaches 47.5 of the 127.5 units the
+  alpha channel encodes, because `TerrainNoiseSettings.Amplitude` is still 50. Per-biome
+  profiles are what will use the rest.
 - **The blend byte only uses its lower half.** Biome A is always the nearer region, so the
   blend tops out at 0.5 (a stored 128) at a border and mirrors from the other side. That is
   continuous and correct, but a shader assuming a full 0..255 range will be wrong.

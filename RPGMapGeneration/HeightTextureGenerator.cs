@@ -22,6 +22,8 @@ namespace RPGMapGeneration
         private static TerrainHeightSource? cachedSource;
         private static TerrainNoiseSettings? cachedNoise;
         private static IslandSettings? cachedIsland;
+        private static int cachedSeed;
+        private static float cachedWorldSize;
 
         /// <summary>World size the generator was last initialised with.</summary>
         public static float Dimensions => dimensions;
@@ -108,12 +110,19 @@ namespace RPGMapGeneration
 
             if (cachedSource == null
                 || !ReferenceEquals(cachedNoise, settings.TerrainNoise)
-                || !ReferenceEquals(cachedIsland, settings.Island))
+                || !ReferenceEquals(cachedIsland, settings.Island)
+                || cachedSeed != settings.Seed
+                || cachedWorldSize != settings.World.Size)
             {
                 cachedNoise = settings.TerrainNoise;
                 cachedIsland = settings.Island;
+                cachedSeed = settings.Seed;
+                cachedWorldSize = settings.World.Size;
 
-                cachedSource = new TerrainHeightSource(cachedNoise, cachedIsland);
+                cachedSource = new TerrainHeightSource(
+                    cachedNoise,
+                    new IslandMask(cachedIsland, cachedSeed, cachedWorldSize),
+                    cachedSeed);
             }
 
             return cachedSource;

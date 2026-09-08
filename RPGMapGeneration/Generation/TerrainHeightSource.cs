@@ -3,60 +3,62 @@ using RPGMapGeneration.Numerics;
 namespace RPGMapGeneration.Generation
 {
     /// <summary>
-    /// The terrain surface as a function of world position: fractal noise shaped by an island
-    /// falloff.
+    /// The terrain surface as a function of world position: fractal relief, sunk into the sea
+    /// by an <see cref="IslandMask"/>.
     /// </summary>
     /// <remarks>
     /// Every method here is a pure function of the settings handed to the constructor and the
     /// position asked about. Nothing is cached and nothing is mutated, which is what lets a
     /// host bake a region at a time, bake a cheap preview at a different resolution, or bake
     /// rows in parallel, and get the same surface every time.
+    ///
+    /// The relief itself is still one global noise field. Deciding it per biome is the next
+    /// step, and the reason the bake is handed a <see cref="BiomeField"/>.
     /// </remarks>
     public sealed class TerrainHeightSource
     {
         private readonly TerrainNoiseSettings noise;
-        private readonly IslandSettings island;
+        private readonly IslandMask island;
 
-        public TerrainHeightSource(TerrainNoiseSettings noise, IslandSettings island)
+        private readonly float reliefOriginX;
+        private readonly float reliefOriginZ;
+
+        public TerrainHeightSource(TerrainNoiseSettings noise, IslandMask island, int seed)
         {
             this.noise = noise;
             this.island = island;
+
+            // The seed moves the relief as well as the coastline, so that a new seed is a new
+            // world rather than the same hills behind a different shore. TerrainNoiseSettings
+            // origins stay available as a manual nudge on top of that.
+            reliefOriginX = noise.OriginX + SeedOffsets.For(seed, 4);
+            reliefOriginZ = noise.OriginZ + SeedOffsets.For(seed, 5);
         }
+
+        /// <summary>The coastline this surface is shaped by.</summary>
+        public IslandMask Island => island;
 
         /// <summary>Terrain height in world units at a world position.</summary>
         public float GetHeight(float x, float z)
         {
-            x += noise.OriginX;
-            z += noise.OriginZ;
+            float mask = island.GetMask(x, z);
 
-            float baseHeight = Fbm(
-                x,
-                z,
+            // Out at sea there is nothing to sample, and most of the map's border is sea.
+            if (mask <= 0.0f)
+            {
+                return 0.0f;
+            }
+
+            float relief = Fbm(
+                x + reliefOriginX,
+                z + reliefOriginZ,
                 noise.Scale,
                 noise.Amplitude,
                 noise.Octaves,
                 noise.Persistence,
                 noise.Lacunarity);
 
-            float islandSlope = GetIslandSlope(x, z);
-
-            float cutoffNoise = Fbm(
-                x,
-                z,
-                island.CutoffNoiseScale,
-                island.CutoffAmplitude,
-                island.CutoffOctaves,
-                island.CutoffPersistence,
-                island.CutoffLacunarity);
-
-            // Truncating to a whole number is deliberate: it turns the smooth carving noise
-            // into a stepped mask, which is what gives the coast its ragged edge rather than a
-            // soft gradient.
-            int cutoffSteps = (int)(cutoffNoise * island.CutoffGain * (1.0f - islandSlope));
-
-            float islandCutoff = Mathf.Clamp01(cutoffSteps - 1) * (1.0f - islandSlope);
-
-            return Mathf.Max(0.0f, (baseHeight - islandCutoff * island.CutoffHeightPenalty) * islandSlope);
+            return relief * mask;
         }
 
         /// <summary>Surface normal at a world position, finite differenced from the height.</summary>
@@ -78,21 +80,6 @@ namespace RPGMapGeneration.Generation
                 2f * sampleDistance,
                 hD - hU
             ).Normalized;
-        }
-
-        /// <summary>
-        /// How much land there is at a position, <c>1</c> inland and <c>0</c> out at sea.
-        /// </summary>
-        /// <remarks>
-        /// The coordinates passed in have already had the noise origin added, so the origin is
-        /// subtracted back out here: the island stays centred on the world whatever the noise
-        /// field is sampled from.
-        /// </remarks>
-        private float GetIslandSlope(float x, float z)
-        {
-            Vector2 distanceToCenter = new Vector2(x - noise.OriginX, z - noise.OriginZ);
-
-            return Mathf.Max(0.0f, Mathf.Min(1.0f, (island.FalloffRadius - distanceToCenter.Magnitude) * island.FalloffSharpness));
         }
 
         private static float Fbm(float x, float z, float scale, float amplitude, int octaves, float persistence, float lacunarity)
