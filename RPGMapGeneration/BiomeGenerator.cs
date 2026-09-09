@@ -45,7 +45,9 @@ namespace RPGMapGeneration
         {
             MapGenerationSettings settings = MapGenerator.Settings;
 
-            SetCurrentField(BiomeFieldGenerator.Generate(settings.BiomeLayout, settings.Seed, textureSize, worldSize));
+            IslandMask island = new IslandMask(settings.Island, settings.Seed, worldSize);
+
+            SetCurrentField(BiomeFieldGenerator.Generate(settings.BiomeLayout, island, settings.Seed, textureSize, worldSize));
         }
 
         /// <summary>Dominant biome at a world position, <c>0</c> .. <c>15</c>.</summary>

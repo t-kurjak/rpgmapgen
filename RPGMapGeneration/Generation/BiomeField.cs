@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using RPGMapGeneration.Imaging;
 using RPGMapGeneration.Numerics;
 
@@ -21,12 +22,13 @@ namespace RPGMapGeneration.Generation
     {
         private readonly BiomeBlend[] blends;
 
-        internal BiomeField(BiomeBlend[] blends, int size, float worldSize)
+        internal BiomeField(BiomeBlend[] blends, int size, float worldSize, IReadOnlyList<BiomeRegion> regions)
         {
             this.blends = blends;
 
             Size = size;
             WorldSize = worldSize;
+            Regions = regions;
         }
 
         /// <summary>Edge length of the field in pixels.</summary>
@@ -34,6 +36,20 @@ namespace RPGMapGeneration.Generation
 
         /// <summary>Edge length of the world the field covers, in world units.</summary>
         public float WorldSize { get; }
+
+        /// <summary>
+        /// The region seeds the scatter placed, in the order it placed them. There can be
+        /// fewer than <see cref="BiomeLayoutSettings.RegionCount"/> asked for when the island
+        /// has no room for them.
+        /// </summary>
+        /// <remarks>
+        /// Exposed so a tool can draw the layout's skeleton rather than only its result - the
+        /// seeds are what a map editor would let someone drag around.
+        /// </remarks>
+        public IReadOnlyList<BiomeRegion> Regions { get; }
+
+        /// <summary>How many regions the scatter actually placed.</summary>
+        public int RegionCount => Regions.Count;
 
         /// <summary>Biome pair and blend weight at a world position.</summary>
         public BiomeBlend SampleBlend(float x, float z)

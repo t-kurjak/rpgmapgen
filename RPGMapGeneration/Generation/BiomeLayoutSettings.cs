@@ -4,60 +4,81 @@ namespace RPGMapGeneration.Generation
     /// How the biome regions are scattered and how wide the transition between two of them is.
     /// </summary>
     /// <remarks>
-    /// Every distance here is still measured in <em>texture pixels</em>, which is what the
-    /// Unity original did and what the port kept. That makes the layout depend on the bake
-    /// resolution: the same seed at 512 and at 1024 pixels agrees on only about 80% of
-    /// positions, because <see cref="BorderDistortion"/> and <see cref="BlendWidth"/> stay
-    /// fixed while the pixel grid does not. It is harmless while the blend only decides two
-    /// bytes of the packed texture and becomes a real problem once terrain height depends on
-    /// it, so these want converting to world units.
+    /// Every distance here is in world units, and every frequency is per world unit, so the
+    /// layout is a property of the world rather than of the resolution it happens to be baked
+    /// at. The Unity original measured all of this in texture pixels, which meant the same seed
+    /// drew a different map at 512 than at 1024 - they agreed on only about 80% of positions.
+    /// That was survivable while the blend decided nothing but two bytes of the texture; it
+    /// stops being survivable as soon as terrain height depends on it.
+    ///
+    /// <see cref="RegionCount"/> and <see cref="BiomeCount"/> are deliberately separate. One
+    /// region per biome means one enormous blob each; several regions sharing a biome id is
+    /// what gives a map two meadows in different places.
     /// </remarks>
     public sealed class BiomeLayoutSettings
     {
         /// <summary>
-        /// Number of biome regions to scatter. Each region currently gets its own biome id, so
-        /// this is also the number of distinct biomes. The packed texture stores a biome id in
-        /// a nibble, so 16 is the hard ceiling.
+        /// Number of regions to scatter across the island. More regions means a busier,
+        /// finer-grained map.
         /// </summary>
-        public int BiomeCount = 3;
+        public int RegionCount = 12;
 
-        /// <summary>Peak distance, in pixels, that the border noise pushes a region edge by.</summary>
+        /// <summary>
+        /// Number of distinct biome ids in play. Regions are dealt these in turn, so several
+        /// regions share a biome. The packed texture stores an id in a nibble, so 16 is the
+        /// hard ceiling.
+        /// </summary>
+        public int BiomeCount = 4;
+
+        /// <summary>
+        /// Peak distance in world units that the border noise displaces a region edge by. Large
+        /// values are what stop the regions looking like a Voronoi diagram.
+        /// </summary>
         public float BorderDistortion = 900.0f;
 
-        /// <summary>Frequency of the border noise, per pixel.</summary>
+        /// <summary>Frequency of the border noise, per world unit.</summary>
         public float BorderNoiseScale = 0.005f;
 
         /// <summary>
-        /// How much a region's own position offsets its border noise, so that neighbouring
-        /// regions do not distort identically.
+        /// How much a region's own position offsets its border noise, per world unit, so that
+        /// neighbouring regions do not distort in lockstep.
         /// </summary>
         public float BorderNoiseOffsetScale = 0.0007f;
 
-        /// <summary>Width of the transition between two regions, in pixels.</summary>
+        /// <summary>Width of the transition between two regions, in world units.</summary>
         public float BlendWidth = 50.0f;
 
         /// <summary>
-        /// Smallest allowed gap between two region seeds, as a fraction of the texture size.
+        /// Smallest allowed gap between two region seeds, as a fraction of the world size.
         /// </summary>
         public float MinimumSeparation = 0.15f;
 
         /// <summary>
-        /// Rejection sampling attempts allowed per requested region before the scatter gives
-        /// up. Giving up yields fewer regions than <see cref="BiomeCount"/> asked for.
+        /// Whether region seeds must land above water. With this off, a region can be centred
+        /// out at sea and reach the island only as a sliver, if at all.
         /// </summary>
-        public int MaximumAttemptsPerBiome = 100;
+        public bool RequireLandSeeds = true;
+
+        /// <summary>
+        /// Rejection sampling attempts allowed per requested region before the scatter gives
+        /// up. Giving up yields fewer regions than <see cref="RegionCount"/> asked for, which
+        /// is reported through <see cref="Diagnostics.MapLog"/>.
+        /// </summary>
+        public int MaximumAttemptsPerRegion = 100;
 
         public BiomeLayoutSettings Clone()
         {
             return new BiomeLayoutSettings
             {
+                RegionCount = RegionCount,
                 BiomeCount = BiomeCount,
                 BorderDistortion = BorderDistortion,
                 BorderNoiseScale = BorderNoiseScale,
                 BorderNoiseOffsetScale = BorderNoiseOffsetScale,
                 BlendWidth = BlendWidth,
                 MinimumSeparation = MinimumSeparation,
-                MaximumAttemptsPerBiome = MaximumAttemptsPerBiome
+                RequireLandSeeds = RequireLandSeeds,
+                MaximumAttemptsPerRegion = MaximumAttemptsPerRegion
             };
         }
     }

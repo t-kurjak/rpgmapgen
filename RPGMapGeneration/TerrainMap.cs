@@ -91,9 +91,9 @@ namespace RPGMapGeneration
 
             float worldSize = settings.World.Size;
 
-            biomeField = BiomeFieldGenerator.Generate(settings.BiomeLayout, settings.Seed, textureSize, worldSize);
-
             IslandMask island = new IslandMask(settings.Island, settings.Seed, worldSize);
+
+            biomeField = BiomeFieldGenerator.Generate(settings.BiomeLayout, island, settings.Seed, textureSize, worldSize);
 
             TerrainHeightSource heightSource = new TerrainHeightSource(settings.TerrainNoise, island, settings.Seed);
 
@@ -104,6 +104,14 @@ namespace RPGMapGeneration
 
         private static Color32[] Bake(TerrainHeightSource heightSource, BiomeField biomeField, int textureSize, float worldSize, float maximumHeight)
         {
+            // The bake reads the biome field by pixel rather than by world position, so the two
+            // grids have to be the same. Mismatched sizes would otherwise stretch the biome
+            // layout across the map without anything failing.
+            if (biomeField.Size != textureSize)
+            {
+                throw new ArgumentException($"The biome field is {biomeField.Size} pixels across but the bake is {textureSize}. Generate the biome field at the size it will be baked at.", nameof(biomeField));
+            }
+
             Color32[] pixels = new Color32[textureSize * textureSize];
 
             float sampleSpacing = worldSize / textureSize;
@@ -117,7 +125,9 @@ namespace RPGMapGeneration
 
                     Vector3 normal = heightSource.GetNormal(worldX, worldZ);
 
-                    BiomeBlend biomeBlend = biomeField.SampleBlend(worldX, worldZ);
+                    // The field was built on this same grid, so take the pixel straight
+                    // rather than mapping a world position back onto it and rounding twice.
+                    BiomeBlend biomeBlend = biomeField.GetBlendAtPixel(x, z);
 
                     float height = heightSource.GetHeight(worldX, worldZ);
 

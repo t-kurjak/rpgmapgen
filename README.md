@@ -91,6 +91,7 @@ using RPGMapGeneration.Generation;
 var settings = new MapGenerationSettings { Seed = 12345 };
 settings.World.MaximumHeight = 127.5f;
 settings.BiomeLayout.BiomeCount = 4;
+settings.BiomeLayout.RegionCount = 12;
 
 TerrainMap map = TerrainMap.Generate(settings, textureSize: 1024);
 map.Save("terrain.png");
@@ -152,6 +153,29 @@ Console.WriteLine($"{coverage.LandFraction:P0} land, touches border: {coverage.T
 
 With the defaults that is 70-75% land on a 1024 unit world, water all the way around, and
 `BorderFraction` zero on every seed tried.
+
+## Biome layout
+
+The biome pass scatters region seeds across the island and gives every sample the two nearest
+regions plus a weight between them. Everything is in world units, so the layout is a property
+of the world rather than of the resolution it happens to be baked at.
+
+| Setting | Effect |
+| --- | --- |
+| `RegionCount` | How many regions to scatter. More regions means a busier, finer-grained map. |
+| `BiomeCount` | How many distinct biome ids are in play. Regions are dealt these in turn, so several regions share a biome - which is how a map gets two meadows in different places instead of one enormous one. Capped at 16 by the nibble. |
+| `MinimumSeparation` | Smallest gap between two seeds, as a fraction of the world size. |
+| `RequireLandSeeds` | Keeps seeds off open water. Without it about a third of them land in the sea, where a region reaches the island only as a sliver, if at all. |
+| `BorderDistortion`, `BorderNoiseScale` | How far and how often the border noise displaces a region edge. Large distortion is what stops the map looking like a Voronoi diagram. |
+| `BlendWidth` | Width of the transition between two regions, in world units. |
+
+`BiomeField.Regions` exposes the seeds that were placed, so a tool can draw the layout's
+skeleton rather than only its result. The scatter can place fewer regions than asked for when
+the island has no room; it says so through `MapLog` rather than failing, and `RegionCount`
+reports what it managed.
+
+Two regions that happen to share a biome id have no transition between them, so the blend is
+zero there and they read as one continuous area.
 
 `settings.Validate()` throws on values that cannot work - more than 16 biomes, a height
 ceiling of zero. `settings.DescribeWarnings()` returns the softer problems as sentences a

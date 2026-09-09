@@ -1,11 +1,13 @@
 using System.Collections.Generic;
 using RPGMapGeneration.Compat;
+using RPGMapGeneration.Diagnostics;
 using RPGMapGeneration.Numerics;
 
 namespace RPGMapGeneration.Generation
 {
     /// <summary>
-    /// Scatters biome regions and resolves every pixel to the two nearest of them.
+    /// Scatters biome regions across the island and resolves every pixel to the two nearest of
+    /// them.
     /// </summary>
     /// <remarks>
     /// The regions are a Voronoi diagram whose distances are pushed around by Perlin noise, so
@@ -13,37 +15,33 @@ namespace RPGMapGeneration.Generation
     /// region as well as the nearest is what gives a sample its biome <em>pair</em>, and the
     /// gap between the two distances is what gives it a blend weight: the gap closes to nothing
     /// at a border and widens towards the middle of a region.
+    ///
+    /// Everything is computed in world units, so the layout does not change when the same world
+    /// is baked at a different resolution.
     /// </remarks>
     public static class BiomeFieldGenerator
     {
-        private struct BiomePoint
-        {
-            public Vector2 Position;
-            public int BiomeId;
-
-            public BiomePoint(Vector2 position, int biomeId)
-            {
-                Position = position;
-                BiomeId = biomeId;
-            }
-        }
-
-        /// <summary>Runs the biome pass for one bake.</summary>
-        public static BiomeField Generate(BiomeLayoutSettings settings, int seed, int size, float worldSize)
+        /// <summary>
+        /// Runs the biome pass for one bake. The island mask is what keeps region seeds on
+        /// land, so that a region is never centred out at sea where it would reach the island
+        /// only as a sliver, if at all.
+        /// </summary>
+        public static BiomeField Generate(BiomeLayoutSettings settings, IslandMask island, int seed, int size, float worldSize)
         {
             BiomeBlend[] blends = new BiomeBlend[size * size];
 
-            List<BiomePoint> points = ScatterBiomePoints(
-                settings,
-                seed,
-                size,
-                size * settings.MinimumSeparation);
+            List<BiomeRegion> regions = ScatterRegions(settings, island, seed, worldSize);
+
+            float sampleSpacing = worldSize / size;
+            float halfExtent = worldSize * 0.5f;
 
             for (int z = 0; z < size; z++)
             {
                 for (int x = 0; x < size; x++)
                 {
-                    Vector2 position = new Vector2(x, z);
+                    // The same world position the bake will use for this pixel.
+                    float worldX = (x + 0.5f) * sampleSpacing - halfExtent;
+                    float worldZ = (z + 0.5f) * sampleSpacing - halfExtent;
 
                     float closestDistance = float.MaxValue;
                     float secondClosestDistance = float.MaxValue;
@@ -51,16 +49,16 @@ namespace RPGMapGeneration.Generation
                     int closestBiome = 0;
                     int secondClosestBiome = 0;
 
-                    foreach (BiomePoint point in points)
+                    foreach (BiomeRegion region in regions)
                     {
-                        float distance = Vector2.Distance(position, point.Position);
+                        float distance = Vector2.Distance(new Vector2(worldX, worldZ), region.Position);
 
                         // Push the border around so that it is not a straight bisector. The
-                        // point's own position offsets the noise, so two neighbouring regions
+                        // region's own position offsets the noise, so two neighbouring regions
                         // do not distort in lockstep.
                         float noise = Mathf.PerlinNoise(
-                            x * settings.BorderNoiseScale + point.Position.x * settings.BorderNoiseOffsetScale,
-                            z * settings.BorderNoiseScale + point.Position.y * settings.BorderNoiseOffsetScale);
+                            worldX * settings.BorderNoiseScale + region.Position.x * settings.BorderNoiseOffsetScale,
+                            worldZ * settings.BorderNoiseScale + region.Position.y * settings.BorderNoiseOffsetScale);
 
                         distance += (noise - 0.5f) * settings.BorderDistortion;
 
@@ -70,23 +68,26 @@ namespace RPGMapGeneration.Generation
                             secondClosestBiome = closestBiome;
 
                             closestDistance = distance;
-                            closestBiome = point.BiomeId;
+                            closestBiome = region.BiomeId;
                         }
                         else if (distance < secondClosestDistance)
                         {
                             secondClosestDistance = distance;
-                            secondClosestBiome = point.BiomeId;
+                            secondClosestBiome = region.BiomeId;
                         }
                     }
 
-                    // At a border the two distances are equal and the blend reaches its
-                    // maximum; deeper inside the nearest region the gap widens and the blend
-                    // falls back to zero.
                     float distanceDifference = secondClosestDistance - closestDistance;
 
                     float boundaryBlend = Mathf.InverseLerp(settings.BlendWidth, 0.0f, distanceDifference);
 
                     boundaryBlend = Mathf.SmoothStep(0.0f, 1.0f, boundaryBlend);
+
+                    // Two regions that happen to share a biome id have no transition to make.
+                    if (closestBiome == secondClosestBiome)
+                    {
+                        boundaryBlend = 0.0f;
+                    }
 
                     // A is always the nearer region, so the blend never passes 0.5: at a border
                     // it reads 0.5 from both sides, with A and B swapped. That is continuous,
@@ -97,45 +98,56 @@ namespace RPGMapGeneration.Generation
                 }
             }
 
-            return new BiomeField(blends, size, worldSize);
+            return new BiomeField(blends, size, worldSize, regions);
         }
 
         /// <summary>
-        /// Rejection samples region seeds that are at least <paramref name="minimumDistance"/>
-        /// pixels apart, with biome 0 pinned to the middle of the map as the starter biome.
+        /// Rejection samples region seeds that are at least
+        /// <see cref="BiomeLayoutSettings.MinimumSeparation"/> of the world apart and, unless
+        /// told otherwise, above water. Biome 0 is pinned to the middle of the map as the
+        /// starter biome.
         /// </summary>
         /// <remarks>
-        /// The scatter can run out of attempts and return fewer seeds than were asked for,
-        /// which shows up as a map with fewer biomes rather than as an error.
-        /// <see cref="MapGenerationSettings.DescribeWarnings"/> flags the combinations where
-        /// that is likely.
+        /// Regions are dealt biome ids in turn rather than at random, so a map with four biomes
+        /// and twelve regions gets three of each wherever they land, instead of the clumping
+        /// that independent random draws would give.
+        ///
+        /// The scatter can run out of attempts and return fewer regions than were asked for.
+        /// That is reported rather than thrown, because a slightly sparser map is usually still
+        /// worth baking.
         /// </remarks>
-        private static List<BiomePoint> ScatterBiomePoints(BiomeLayoutSettings settings, int seed, int size, float minimumDistance)
+        private static List<BiomeRegion> ScatterRegions(BiomeLayoutSettings settings, IslandMask island, int seed, float worldSize)
         {
             UnityRandom.InitState(seed);
 
-            List<BiomePoint> points = new List<BiomePoint>();
+            List<BiomeRegion> regions = new List<BiomeRegion>();
 
-            Vector2 mapCenter = new Vector2(size * 0.5f, size * 0.5f);
+            regions.Add(new BiomeRegion(new Vector2(0.0f, 0.0f), 0));
 
-            points.Add(new BiomePoint(mapCenter, 0));
+            float minimumDistance = worldSize * settings.MinimumSeparation;
+            float halfExtent = worldSize * 0.5f;
 
             int attempts = 0;
-            int maximumAttempts = settings.BiomeCount * settings.MaximumAttemptsPerBiome;
+            int maximumAttempts = settings.RegionCount * settings.MaximumAttemptsPerRegion;
 
-            while (points.Count < settings.BiomeCount && attempts < maximumAttempts)
+            while (regions.Count < settings.RegionCount && attempts < maximumAttempts)
             {
                 attempts++;
 
                 Vector2 candidate = new Vector2(
-                    UnityRandom.Range(0f, size),
-                    UnityRandom.Range(0f, size));
+                    UnityRandom.Range(-halfExtent, halfExtent),
+                    UnityRandom.Range(-halfExtent, halfExtent));
+
+                if (settings.RequireLandSeeds && island.GetMask(candidate.x, candidate.y) <= 0.0f)
+                {
+                    continue;
+                }
 
                 bool valid = true;
 
-                foreach (BiomePoint point in points)
+                foreach (BiomeRegion region in regions)
                 {
-                    if (Vector2.Distance(candidate, point.Position) < minimumDistance)
+                    if (Vector2.Distance(candidate, region.Position) < minimumDistance)
                     {
                         valid = false;
                         break;
@@ -144,11 +156,16 @@ namespace RPGMapGeneration.Generation
 
                 if (valid)
                 {
-                    points.Add(new BiomePoint(candidate, points.Count));
+                    regions.Add(new BiomeRegion(candidate, (byte)(regions.Count % settings.BiomeCount)));
                 }
             }
 
-            return points;
+            if (regions.Count < settings.RegionCount)
+            {
+                MapLog.Log($"Biome scatter placed {regions.Count} of the {settings.RegionCount} regions asked for; a minimum separation of {minimumDistance:F0} units does not leave room for more on this island.");
+            }
+
+            return regions;
         }
     }
 }

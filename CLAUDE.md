@@ -55,7 +55,7 @@ so regenerate and byte-compare:
 dotnet run --project rpgmapgen -- -o rpgmapgen/output/check.png -s 4096
 ```
 
-That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 15d08cc6…` for the
+That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 c3068c09…` for the
 default settings and a version 1 header). This is a *reproducibility* check, not a parity
 check against Unity: the same settings must always give the same bytes, because a tool's
 preview and the game's bake have to agree. A difference after a refactor that was meant to
@@ -160,9 +160,20 @@ The generation pipeline is three passes, and every one of them is an instance:
    than 60% land also clipped. `CoastBias` then concentrates the erosion into a few deep
    inlets instead of nibbling the whole coast, which is what buys back the area: the defaults
    hold 70-75% land with zero clipping.
-2. **`BiomeFieldGenerator.Generate` → `BiomeField`** — which biomes are where.
+2. **`BiomeFieldGenerator.Generate` → `BiomeField`** — which biomes are where. A Voronoi
+   diagram over region seeds with Perlin-distorted distances, so borders wander instead of
+   being straight bisectors. Seeds are rejection sampled onto the island
+   (`RequireLandSeeds`), which moves about 30% of them off open water. All in world units, so
+   the same world baked at 256 and at 2048 names the same biome everywhere except inside a
+   transition band, where a half-pixel difference can legitimately tip which region is nearer.
+
+   `RegionCount` and `BiomeCount` are separate on purpose: ids are dealt to regions in turn,
+   so twelve regions over four biomes gives three patches of each rather than four huge blobs.
+   Regions that share an id have no transition between them. `BiomeField.Regions` exposes the
+   seeds so a tool can show the layout's skeleton, not just its result.
 3. **The bake in `TerrainMap`** — samples `TerrainHeightSource` and the biome field into the
-   packed texture.
+   packed texture. It indexes the biome field by pixel rather than by world position, so the
+   field must be built at the size it will be baked at; `Bake` throws if it is not.
 
 `IslandMask` and `TerrainHeightSource` are pure functions of their settings — nothing cached,
 nothing mutated — which is what makes previews at another resolution, partial re-bakes and
@@ -207,12 +218,9 @@ header reading as `UnversionedVersion`.
 
 Measured from the checked-in 4096 bake, so that these are not mistaken for design intent:
 
-- **The biome layout depends on the bake resolution.** `BiomeLayoutSettings` is still measured
-  in texture pixels, so the same seed at 512 and 1024 agrees on only ~80% of positions. Moving
-  it to world units is a prerequisite for letting terrain height depend on the biome.
 - **The terrain pass does not read the biome yet.** `TerrainHeightSource` is one global noise
-  field; the two-pass pipeline exists but phase 2 ignores phase 1. Per-biome elevation is the
-  point of the `BiomeField` being handed to the bake.
+  field; all three passes exist but the last one ignores the biome pass. Per-biome elevation
+  is the point of the `BiomeField` being handed to the bake, and is the next step.
 - **Height uses about a third of its range.** Terrain reaches 47.5 of the 127.5 units the
   alpha channel encodes, because `TerrainNoiseSettings.Amplitude` is still 50. Per-biome
   profiles are what will use the rest.

@@ -75,6 +75,16 @@ namespace RPGMapGeneration.Generation
                 throw new ArgumentOutOfRangeException(nameof(BiomeLayout), $"The biome count must be between 1 and {MaximumBiomeCount}, because the packed texture stores a biome id in a nibble.");
             }
 
+            if (BiomeLayout.RegionCount < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(BiomeLayout), "There must be at least one biome region.");
+            }
+
+            if (BiomeLayout.RegionCount < BiomeLayout.BiomeCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(BiomeLayout), $"{BiomeLayout.RegionCount} regions cannot carry {BiomeLayout.BiomeCount} biomes; some biome would never appear on the map.");
+            }
+
             if (BiomeLayout.MinimumSeparation <= 0.0f || BiomeLayout.MinimumSeparation > 1.0f)
             {
                 throw new ArgumentOutOfRangeException(nameof(BiomeLayout), "The minimum biome separation is a fraction of the texture size and must lie in (0, 1].");
@@ -154,15 +164,20 @@ namespace RPGMapGeneration.Generation
                 yield return $"Terrain can reach {reachableHeight} units but the alpha channel tops out at {World.MaximumHeight}, so peaks will bake flat.";
             }
 
-            // Poisson style rejection sampling cannot pack more than about this many seeds
-            // into the square before it starts failing.
-            float separation = BiomeLayout.MinimumSeparation;
+            // How many seeds fit on the island at this separation. Points packed hexagonally
+            // at a minimum distance d sit at a density of 2 / (sqrt(3) * d^2); rejection
+            // sampling reaches roughly half of that before it starts failing, which is where
+            // the 0.6 comes from. It is an estimate, so it only has to be right enough to stop
+            // the warning firing on settings that demonstrably work.
+            float separation = BiomeLayout.MinimumSeparation * World.Size;
 
-            int roughCapacity = (int)(1.0f / (separation * separation));
+            float landArea = coverage.LandFraction * World.Size * World.Size;
 
-            if (BiomeLayout.BiomeCount > roughCapacity)
+            int roughCapacity = (int)(0.6f * landArea / (separation * separation));
+
+            if (BiomeLayout.RegionCount > roughCapacity)
             {
-                yield return $"{BiomeLayout.BiomeCount} biome regions at a minimum separation of {separation:P0} of the texture is unlikely to fit; the scatter will silently produce fewer.";
+                yield return $"{BiomeLayout.RegionCount} regions at a minimum separation of {separation:F0} units is unlikely to fit on this island; the scatter will place fewer and say so.";
             }
         }
     }
