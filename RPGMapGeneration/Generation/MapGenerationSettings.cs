@@ -190,6 +190,16 @@ namespace RPGMapGeneration.Generation
                     throw new ArgumentOutOfRangeException(nameof(BiomeProfiles), $"Biome profile '{profile.Name}' has a relief bias below 1; it is a whole power.");
                 }
 
+                if (profile.TerraceSteps < 0)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(BiomeProfiles), $"Biome profile '{profile.Name}' has a negative terrace count; use 0 to leave the relief smooth.");
+                }
+
+                if (profile.TerraceFlatness < 1)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(BiomeProfiles), $"Biome profile '{profile.Name}' has a terrace flatness below 1; it is a whole power.");
+                }
+
                 if (profile.ReliefAmplitude < 0.0f || profile.BaseElevation < 0.0f)
                 {
                     throw new ArgumentOutOfRangeException(nameof(BiomeProfiles), $"Biome profile '{profile.Name}' has a negative elevation or amplitude; the packed height channel cannot store ground below sea level.");

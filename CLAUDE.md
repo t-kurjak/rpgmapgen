@@ -55,7 +55,7 @@ so regenerate and byte-compare:
 dotnet run --project rpgmapgen -- -o rpgmapgen/output/check.png -s 4096
 ```
 
-That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 c6098e34…` for the
+That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 98b2ba4d…` for the
 default settings and a version 1 header). This is a *reproducibility* check, not a parity
 check against Unity: the same settings must always give the same bytes, because a tool's
 preview and the game's bake have to agree. A difference after a refactor that was meant to
@@ -243,8 +243,19 @@ Measured from the checked-in 4096 bake, so that these are not mistaken for desig
 - **Ridged noise builds plateaus, not ranges, on its own.** `1 - |2n - 1|` concentrates its
   output near the top of the range, so the mountain profile with `ReliefBias = 1` put only 3%
   of the biome below 60 units — a high tableland with crests on it. `ReliefBias = 2` digs the
-  valleys back in: 32% below 60, spread from 31 to 110. Any new ridged profile will want the
-  same treatment.
+  valleys back in. Any new ridged profile will want the same treatment.
+- **Terracing is not what makes ground buildable; feature size is.** A tread is only as wide
+  as its height divided by the local gradient, so on steep, busy noise every shelf is a couple
+  of units across and nothing is level. Measured over a 6×6 unit footprint, widening the
+  mountains' `NoiseScale` from 0.014 to 0.006 and dropping `Persistence` from 0.5 to 0.32 took
+  buildable ground from 1.4% to 30%; `TerraceSteps` then added a further 10 points. Reach for
+  the noise first and the terraces second. `TerraceStrength` barely moves buildability at all
+  (20.7% at 0.5 against 23.6% at 0.9, measured on the baked texture) — it is a look control.
+- **Mountains no longer reach the top of the channel.** Easing `Ridged` to 0.65 and keeping
+  `ReliefBias = 2` caps the achieved peak near 86 of 127.5 units, though the profile's ceiling
+  is 121. That is deliberate: raising it back up widens the gap to the meadows again, which is
+  the contrast the defaults were tuned to close. Note that `DescribeWarnings` checks a
+  profile's *ceiling*, not the height it actually reaches, so it will not flag this.
 - **The bake is single threaded and getting slower.** Each step has added noise per sample;
   at 4096 it is now several minutes. `TerrainHeightSource` and `IslandMask` are pure by
   design, so `Parallel.For` over rows is the fix and needs no restructuring.

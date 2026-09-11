@@ -155,7 +155,45 @@ namespace RPGMapGeneration.Generation
                 relief = biased;
             }
 
+            if (profile.TerraceSteps > 0 && profile.TerraceStrength > 0.0f)
+            {
+                relief = Terrace(relief, profile.TerraceSteps, profile.TerraceStrength, profile.TerraceFlatness);
+            }
+
             return profile.BaseElevation + relief * profile.ReliefAmplitude;
+        }
+
+        /// <summary>
+        /// Quantises relief into bands with level treads and steeper risers between them.
+        /// </summary>
+        /// <remarks>
+        /// Within a band the value is pulled towards the band's floor by a whole power, so most
+        /// of the band is flat and the climb to the next happens over a short distance. The
+        /// result is mixed back with the original by <paramref name="strength"/>, because fully
+        /// terraced ground looks machined; leaving some of the underlying slope showing keeps
+        /// the shelves irregular.
+        ///
+        /// This deliberately does nothing about <em>where</em> the treads fall. They follow the
+        /// relief, so a terrace is a contour of the hill rather than a grid imposed on it.
+        /// </remarks>
+        private static float Terrace(float relief, int steps, float strength, int flatness)
+        {
+            float scaled = relief * steps;
+
+            float band = Mathf.Floor(scaled);
+
+            float within = scaled - band;
+
+            float shaped = within;
+
+            for (int i = 1; i < flatness; i++)
+            {
+                shaped *= within;
+            }
+
+            float terraced = (band + shaped) / steps;
+
+            return Mathf.Lerp(relief, terraced, Mathf.Clamp01(strength));
         }
 
         /// <summary>
