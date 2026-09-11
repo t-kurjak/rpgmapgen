@@ -55,7 +55,7 @@ so regenerate and byte-compare:
 dotnet run --project rpgmapgen -- -o rpgmapgen/output/check.png -s 4096
 ```
 
-That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 c3068c09…` for the
+That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 c6098e34…` for the
 default settings and a version 1 header). This is a *reproducibility* check, not a parity
 check against Unity: the same settings must always give the same bytes, because a tool's
 preview and the game's bake have to agree. A difference after a refactor that was meant to
@@ -169,9 +169,31 @@ The generation pipeline is three passes, and every one of them is an instance:
 
    `RegionCount` and `BiomeCount` are separate on purpose: ids are dealt to regions in turn,
    so twelve regions over four biomes gives three patches of each rather than four huge blobs.
-   Regions that share an id have no transition between them. `BiomeField.Regions` exposes the
-   seeds so a tool can show the layout's skeleton, not just its result.
-3. **The bake in `TerrainMap`** — samples `TerrainHeightSource` and the biome field into the
+   `BiomeField.Regions` exposes the seeds so a tool can show the layout's skeleton, not just
+   its result.
+
+   **Biome B is the nearest region with a *different* id, not the second nearest region.**
+   That distinction is load-bearing now that height depends on the blend. Taking the runner-up
+   and zeroing the blend when the two ids matched — which is what this did at first — makes the
+   pair change identity discontinuously, and the height jumps with it: a measured 17.6 unit
+   step over a quarter of a world unit. Asking for the nearest *other* biome makes two
+   neighbouring regions that share an id behave as the single area they visually are, and the
+   blend falls continuously to zero when nothing different is nearby.
+3. **`TerrainHeightSource`** — what the ground does in each biome. Every biome has a
+   `BiomeProfile` giving it an elevation band (`BaseElevation` plus `ReliefAmplitude`) and a
+   character (`NoiseScale`, `Octaves`, `Ridged`, `ReliefBias`). A sample's height is the two
+   profiles' heights mixed by the blend weight.
+
+   **Mix the finished heights, never the noise parameters.** Interpolating frequencies across
+   a border makes the noise swim and shift phase; interpolating outputs is stable and is what
+   turns a cliff at every biome edge into a slope. The cost is two noise evaluations per
+   sample, so the second is skipped where the blend is zero — about 72% of the land.
+
+   `BiomeLayoutSettings.BlendWidth` is now a terrain control, not just a texture one: it sets
+   how far a mountain front has to climb. At the default 50 units a mountains/plains boundary
+   is an escarpment; widening it trades that for more of the map being a mixture of two biomes
+   rather than clearly one.
+4. **The bake in `TerrainMap`** — samples the height source and the biome field into the
    packed texture. It indexes the biome field by pixel rather than by world position, so the
    field must be built at the size it will be baked at; `Bake` throws if it is not.
 
@@ -218,12 +240,14 @@ header reading as `UnversionedVersion`.
 
 Measured from the checked-in 4096 bake, so that these are not mistaken for design intent:
 
-- **The terrain pass does not read the biome yet.** `TerrainHeightSource` is one global noise
-  field; all three passes exist but the last one ignores the biome pass. Per-biome elevation
-  is the point of the `BiomeField` being handed to the bake, and is the next step.
-- **Height uses about a third of its range.** Terrain reaches 47.5 of the 127.5 units the
-  alpha channel encodes, because `TerrainNoiseSettings.Amplitude` is still 50. Per-biome
-  profiles are what will use the rest.
+- **Ridged noise builds plateaus, not ranges, on its own.** `1 - |2n - 1|` concentrates its
+  output near the top of the range, so the mountain profile with `ReliefBias = 1` put only 3%
+  of the biome below 60 units — a high tableland with crests on it. `ReliefBias = 2` digs the
+  valleys back in: 32% below 60, spread from 31 to 110. Any new ridged profile will want the
+  same treatment.
+- **The bake is single threaded and getting slower.** Each step has added noise per sample;
+  at 4096 it is now several minutes. `TerrainHeightSource` and `IslandMask` are pure by
+  design, so `Parallel.For` over rows is the fix and needs no restructuring.
 - **The blend byte only uses its lower half.** Biome A is always the nearer region, so the
   blend tops out at 0.5 (a stored 128) at a border and mirrors from the other side. That is
   continuous and correct, but a shader assuming a full 0..255 range will be wrong.

@@ -70,7 +70,7 @@ namespace RPGMapGeneration
         {
             currentField = field;
 
-            biomeTexture = field.CreatePreview();
+            biomeTexture = field.CreatePreview(MapGenerator.Settings.BiomeProfiles);
         }
 
         private static BiomeField RequireField()

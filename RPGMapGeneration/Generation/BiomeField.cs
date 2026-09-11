@@ -85,13 +85,40 @@ namespace RPGMapGeneration.Generation
         /// </summary>
         public Rgba32Image CreatePreview()
         {
+            return CreatePreview(null);
+        }
+
+        /// <summary>
+        /// The same preview, coloured by the profiles' own <see cref="BiomeProfile.PreviewColor"/>
+        /// so that the picture matches the biomes as configured rather than a fixed palette.
+        /// </summary>
+        public Rgba32Image CreatePreview(IReadOnlyList<BiomeProfile>? profiles)
+        {
+            Color[] palette = new Color[MapGenerationSettings.MaximumBiomeCount];
+
+            for (int id = 0; id < palette.Length; id++)
+            {
+                palette[id] = GetBiomeColor(id);
+            }
+
+            if (profiles != null)
+            {
+                foreach (BiomeProfile profile in profiles)
+                {
+                    if (profile != null && profile.Id < palette.Length)
+                    {
+                        palette[profile.Id] = profile.PreviewColor;
+                    }
+                }
+            }
+
             Rgba32Image preview = new Rgba32Image(Size, Size);
 
             for (int z = 0; z < Size; z++)
             {
                 for (int x = 0; x < Size; x++)
                 {
-                    preview.SetPixel(x, z, GetBiomeColor(blends[z * Size + x].biomeA));
+                    preview.SetPixel(x, z, palette[blends[z * Size + x].biomeA]);
                 }
             }
 

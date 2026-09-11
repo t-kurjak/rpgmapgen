@@ -35,6 +35,11 @@ namespace RPGMapGeneration.Generation
             float sampleSpacing = worldSize / size;
             float halfExtent = worldSize * 0.5f;
 
+            // Reused across every pixel: the distorted distance to each region. Keeping them
+            // lets the two scans below - nearest of all, then nearest of a different biome -
+            // share one pass of Perlin lookups instead of doing them twice.
+            float[] distances = new float[regions.Count];
+
             for (int z = 0; z < size; z++)
             {
                 for (int x = 0; x < size; x++)
@@ -43,14 +48,10 @@ namespace RPGMapGeneration.Generation
                     float worldX = (x + 0.5f) * sampleSpacing - halfExtent;
                     float worldZ = (z + 0.5f) * sampleSpacing - halfExtent;
 
-                    float closestDistance = float.MaxValue;
-                    float secondClosestDistance = float.MaxValue;
-
-                    int closestBiome = 0;
-                    int secondClosestBiome = 0;
-
-                    foreach (BiomeRegion region in regions)
+                    for (int r = 0; r < regions.Count; r++)
                     {
+                        BiomeRegion region = regions[r];
+
                         float distance = Vector2.Distance(new Vector2(worldX, worldZ), region.Position);
 
                         // Push the border around so that it is not a straight bisector. The
@@ -60,33 +61,55 @@ namespace RPGMapGeneration.Generation
                             worldX * settings.BorderNoiseScale + region.Position.x * settings.BorderNoiseOffsetScale,
                             worldZ * settings.BorderNoiseScale + region.Position.y * settings.BorderNoiseOffsetScale);
 
-                        distance += (noise - 0.5f) * settings.BorderDistortion;
+                        distances[r] = distance + (noise - 0.5f) * settings.BorderDistortion;
+                    }
 
-                        if (distance < closestDistance)
-                        {
-                            secondClosestDistance = closestDistance;
-                            secondClosestBiome = closestBiome;
+                    // Nearest region of all decides which biome the sample is in.
+                    int closest = 0;
 
-                            closestDistance = distance;
-                            closestBiome = region.BiomeId;
-                        }
-                        else if (distance < secondClosestDistance)
+                    for (int r = 1; r < regions.Count; r++)
+                    {
+                        if (distances[r] < distances[closest])
                         {
-                            secondClosestDistance = distance;
-                            secondClosestBiome = region.BiomeId;
+                            closest = r;
                         }
                     }
 
-                    float distanceDifference = secondClosestDistance - closestDistance;
+                    byte closestBiome = regions[closest].BiomeId;
 
-                    float boundaryBlend = Mathf.InverseLerp(settings.BlendWidth, 0.0f, distanceDifference);
+                    // The one to blend towards is the nearest region carrying a *different*
+                    // biome, not simply the second nearest region. Two neighbouring regions
+                    // that share a biome are one area as far as terrain is concerned, and
+                    // asking for the runner-up instead would make the pair - and with it the
+                    // height - jump the moment the runner-up changed identity.
+                    int nearestOther = -1;
 
-                    boundaryBlend = Mathf.SmoothStep(0.0f, 1.0f, boundaryBlend);
-
-                    // Two regions that happen to share a biome id have no transition to make.
-                    if (closestBiome == secondClosestBiome)
+                    for (int r = 0; r < regions.Count; r++)
                     {
-                        boundaryBlend = 0.0f;
+                        if (regions[r].BiomeId == closestBiome)
+                        {
+                            continue;
+                        }
+
+                        if (nearestOther < 0 || distances[r] < distances[nearestOther])
+                        {
+                            nearestOther = r;
+                        }
+                    }
+
+                    byte otherBiome = closestBiome;
+
+                    float boundaryBlend = 0.0f;
+
+                    if (nearestOther >= 0)
+                    {
+                        otherBiome = regions[nearestOther].BiomeId;
+
+                        float distanceDifference = distances[nearestOther] - distances[closest];
+
+                        boundaryBlend = Mathf.InverseLerp(settings.BlendWidth, 0.0f, distanceDifference);
+
+                        boundaryBlend = Mathf.SmoothStep(0.0f, 1.0f, boundaryBlend);
                     }
 
                     // A is always the nearer region, so the blend never passes 0.5: at a border
@@ -94,7 +117,7 @@ namespace RPGMapGeneration.Generation
                     // but it does mean the packed B channel only ever uses its lower half.
                     float blend = 0.5f * boundaryBlend;
 
-                    blends[z * size + x] = new BiomeBlend((byte)closestBiome, (byte)secondClosestBiome, blend);
+                    blends[z * size + x] = new BiomeBlend(closestBiome, otherBiome, blend);
                 }
             }
 

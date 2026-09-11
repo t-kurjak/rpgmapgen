@@ -32,6 +32,13 @@ namespace RPGMapGeneration.Generation
 
         public TerrainNoiseSettings TerrainNoise = new TerrainNoiseSettings();
 
+        /// <summary>
+        /// What each biome's terrain looks like. There must be one of these for every id the
+        /// layout can produce, i.e. for <c>0</c> .. <see cref="BiomeLayoutSettings.BiomeCount"/>
+        /// minus one.
+        /// </summary>
+        public List<BiomeProfile> BiomeProfiles = BiomeProfile.CreateDefaultSet();
+
         /// <summary>Highest biome id the packed texture's nibble can carry.</summary>
         public const int MaximumBiomeId = 15;
 
@@ -46,8 +53,21 @@ namespace RPGMapGeneration.Generation
                 World = World.Clone(),
                 Island = Island.Clone(),
                 BiomeLayout = BiomeLayout.Clone(),
-                TerrainNoise = TerrainNoise.Clone()
+                TerrainNoise = TerrainNoise.Clone(),
+                BiomeProfiles = CloneProfiles()
             };
+        }
+
+        private List<BiomeProfile> CloneProfiles()
+        {
+            List<BiomeProfile> copies = new List<BiomeProfile>(BiomeProfiles.Count);
+
+            foreach (BiomeProfile profile in BiomeProfiles)
+            {
+                copies.Add(profile.Clone());
+            }
+
+            return copies;
         }
 
         /// <summary>
@@ -90,10 +110,7 @@ namespace RPGMapGeneration.Generation
                 throw new ArgumentOutOfRangeException(nameof(BiomeLayout), "The minimum biome separation is a fraction of the texture size and must lie in (0, 1].");
             }
 
-            if (TerrainNoise.Octaves < 1)
-            {
-                throw new ArgumentOutOfRangeException(nameof(TerrainNoise), "Noise needs at least one octave.");
-            }
+            ValidateProfiles();
 
             if (TerrainNoise.NormalSampleDistance <= 0.0f)
             {
@@ -127,6 +144,68 @@ namespace RPGMapGeneration.Generation
         }
 
         /// <summary>
+        /// Checks that every biome the layout can produce has a profile to generate terrain
+        /// from, and that each profile is self-consistent.
+        /// </summary>
+        /// <remarks>
+        /// A missing profile is worth throwing over rather than defaulting quietly: it means a
+        /// whole region of the map would silently take some other biome's terrain, which is
+        /// hard to spot in a baked texture and easy to spot here.
+        /// </remarks>
+        private void ValidateProfiles()
+        {
+            if (BiomeProfiles == null || BiomeProfiles.Count == 0)
+            {
+                throw new ArgumentException("There are no biome profiles, so terrain has no shape to take.", nameof(BiomeProfiles));
+            }
+
+            bool[] seen = new bool[MaximumBiomeCount];
+
+            foreach (BiomeProfile profile in BiomeProfiles)
+            {
+                if (profile == null)
+                {
+                    throw new ArgumentException("A biome profile is null.", nameof(BiomeProfiles));
+                }
+
+                if (profile.Id > MaximumBiomeId)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(BiomeProfiles), $"Biome profile '{profile.Name}' has id {profile.Id}, but the packed texture stores an id in a nibble and cannot carry more than {MaximumBiomeId}.");
+                }
+
+                if (seen[profile.Id])
+                {
+                    throw new ArgumentException($"More than one biome profile claims id {profile.Id}.", nameof(BiomeProfiles));
+                }
+
+                seen[profile.Id] = true;
+
+                if (profile.Octaves < 1)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(BiomeProfiles), $"Biome profile '{profile.Name}' needs at least one octave.");
+                }
+
+                if (profile.ReliefBias < 1)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(BiomeProfiles), $"Biome profile '{profile.Name}' has a relief bias below 1; it is a whole power.");
+                }
+
+                if (profile.ReliefAmplitude < 0.0f || profile.BaseElevation < 0.0f)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(BiomeProfiles), $"Biome profile '{profile.Name}' has a negative elevation or amplitude; the packed height channel cannot store ground below sea level.");
+                }
+            }
+
+            for (int id = 0; id < BiomeLayout.BiomeCount; id++)
+            {
+                if (!seen[id])
+                {
+                    throw new ArgumentException($"The layout can produce biome {id} but no profile describes it, so that part of the map would take another biome's terrain.", nameof(BiomeProfiles));
+                }
+            }
+        }
+
+        /// <summary>
         /// Describes settings that are legal but probably not what was intended. Unlike
         /// <see cref="Validate"/> this never throws, so a tool can surface the list next to the
         /// preview instead of refusing to bake.
@@ -152,16 +231,31 @@ namespace RPGMapGeneration.Generation
                 yield return $"The island covers {coverage.LandFraction:P0} of the map, so there is almost no sea around it.";
             }
 
-            float reachableHeight = TerrainNoise.Amplitude;
+            // Each profile is checked on its own, because one biome overrunning the channel
+            // flattens that biome's peaks whatever the others do.
+            float tallestCeiling = 0.0f;
 
-            if (reachableHeight < World.MaximumHeight * 0.75f)
+            foreach (BiomeProfile profile in BiomeProfiles)
             {
-                yield return $"Terrain can only reach {reachableHeight} of the {World.MaximumHeight} units the alpha channel encodes, so about {100.0f - reachableHeight / World.MaximumHeight * 100.0f:F0}% of the height resolution is unused.";
+                if (profile == null)
+                {
+                    continue;
+                }
+
+                if (profile.Ceiling > World.MaximumHeight)
+                {
+                    yield return $"Biome '{profile.Name}' reaches {profile.Ceiling} units but the alpha channel tops out at {World.MaximumHeight}, so its peaks will bake flat.";
+                }
+
+                if (profile.Ceiling > tallestCeiling)
+                {
+                    tallestCeiling = profile.Ceiling;
+                }
             }
 
-            if (reachableHeight > World.MaximumHeight)
+            if (tallestCeiling < World.MaximumHeight * 0.75f)
             {
-                yield return $"Terrain can reach {reachableHeight} units but the alpha channel tops out at {World.MaximumHeight}, so peaks will bake flat.";
+                yield return $"The tallest biome only reaches {tallestCeiling} of the {World.MaximumHeight} units the alpha channel encodes, so about {100.0f - tallestCeiling / World.MaximumHeight * 100.0f:F0}% of the height resolution is unused.";
             }
 
             // How many seeds fit on the island at this separation. Points packed hexagonally

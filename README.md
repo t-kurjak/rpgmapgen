@@ -93,6 +93,10 @@ settings.World.MaximumHeight = 127.5f;
 settings.BiomeLayout.BiomeCount = 4;
 settings.BiomeLayout.RegionCount = 12;
 
+// settings.BiomeProfiles starts as the four default biomes; edit or replace them to
+// change what the ground does. There must be one per biome id the layout can produce.
+settings.BiomeProfiles.First(p => p.Name == "mountains").ReliefAmplitude = 80.0f;
+
 TerrainMap map = TerrainMap.Generate(settings, textureSize: 1024);
 map.Save("terrain.png");
 
@@ -174,13 +178,52 @@ skeleton rather than only its result. The scatter can place fewer regions than a
 the island has no room; it says so through `MapLog` rather than failing, and `RegionCount`
 reports what it managed.
 
-Two regions that happen to share a biome id have no transition between them, so the blend is
-zero there and they read as one continuous area.
+Biome B is the nearest region carrying a *different* biome, not simply the second nearest
+region. Two neighbouring regions that share an id are one area as far as terrain is concerned,
+so the blend between them is zero and they read as continuous.
+
+## Biome terrain
+
+Each biome has a `BiomeProfile` saying what its ground does. This is what the biome pass is
+for: a swamp and a mountain range should not share one noise field.
+
+| Setting | Effect |
+| --- | --- |
+| `BaseElevation` | Where the biome sits, in world units, before any relief. This is what puts a swamp below a plain and a mountain range above both. |
+| `ReliefAmplitude` | How far the relief moves around that base. Small for flat country, large for mountains. |
+| `NoiseScale`, `Octaves`, `Persistence`, `Lacunarity` | The shape of the relief - feature size and how much fine detail sits on top. |
+| `Ridged` | How much of the relief is folded about its midpoint, `0` .. `1`. Plain noise makes rounded lumps; ridging turns the maxima into sharp crests, which is what reads as a range rather than as large hills. |
+| `ReliefBias` | Pushes the relief towards its floor by a whole power. Higher flattens ordinary ground and leaves the high points standing. |
+
+`BaseElevation + ReliefAmplitude` is the biome's ceiling and must stay under
+`WorldSettings.MaximumHeight`, or the alpha channel clamps and that biome's peaks bake flat.
+`DescribeWarnings()` reports it per biome.
+
+The defaults are the four the world is built from:
+
+| Biome | Base | Relief | Ceiling | Character |
+| --- | --- | --- | --- | --- |
+| plains | 8 | 6 | 14 | dry and level, heavily biased flat |
+| meadows | 14 | 22 | 36 | rolling, plain fractal noise |
+| mountains | 26 | 95 | 121 | fully ridged, squared to dig valleys |
+| swamp | 2 | 2.5 | 4.5 | low and flat |
+
+A sample's height is the two profiles' heights mixed by the blend weight. The mixing happens
+on the finished heights, not on the noise parameters - interpolating frequencies across a
+border makes the noise swim and shift phase, while interpolating outputs is stable and is what
+turns what would be a cliff at every biome edge into a slope.
+
+`BlendWidth` on the layout therefore controls how far a mountain front has to climb, not just
+how the texture looks. At the default 50 units a mountains/plains boundary is an escarpment;
+widening it softens that, at the cost of more of the map being a mixture of two biomes rather
+than clearly one.
 
 `settings.Validate()` throws on values that cannot work - more than 16 biomes, a height
-ceiling of zero. `settings.DescribeWarnings()` returns the softer problems as sentences a
-tool can display: an island falloff that overruns the world, terrain that cannot reach the
-height ceiling, more biome regions than the scatter can pack in.
+ceiling of zero, a biome the layout can produce that no profile describes. That last one is
+worth failing over rather than defaulting quietly: it would mean a whole region silently
+taking another biome's terrain. `settings.DescribeWarnings()` returns the softer problems as
+sentences a tool can display: an island that overruns the world, a biome whose peaks will bake
+flat, more regions than the scatter can pack in.
 
 Because a `TerrainMap` owns its pixels, a tool can hold several at once - a low resolution
 preview beside the full bake it is about to replace. For a game with a single world, the

@@ -24,7 +24,11 @@ namespace RPGMapGeneration.Numerics
             this.a = a;
         }
 
-        private static Color FromBytes(byte r, byte g, byte b) =>
+        /// <summary>
+        /// A colour from the 0..255 components a palette is usually written in, rather than
+        /// the 0..1 floats the struct stores.
+        /// </summary>
+        public static Color FromBytes(byte r, byte g, byte b) =>
             new Color(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
 
         public static Color Black => new Color(0.0f, 0.0f, 0.0f, 1.0f);

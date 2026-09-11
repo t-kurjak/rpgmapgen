@@ -95,7 +95,12 @@ namespace RPGMapGeneration
 
             biomeField = BiomeFieldGenerator.Generate(settings.BiomeLayout, island, settings.Seed, textureSize, worldSize);
 
-            TerrainHeightSource heightSource = new TerrainHeightSource(settings.TerrainNoise, island, settings.Seed);
+            TerrainHeightSource heightSource = new TerrainHeightSource(
+                settings.TerrainNoise,
+                island,
+                biomeField,
+                settings.BiomeProfiles,
+                settings.Seed);
 
             Color32[] baked = Bake(heightSource, biomeField, textureSize, worldSize, settings.World.MaximumHeight);
 

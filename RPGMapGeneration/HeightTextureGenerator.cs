@@ -22,6 +22,7 @@ namespace RPGMapGeneration
         private static TerrainHeightSource? cachedSource;
         private static TerrainNoiseSettings? cachedNoise;
         private static IslandSettings? cachedIsland;
+        private static BiomeField? cachedField;
         private static int cachedSeed;
         private static float cachedWorldSize;
 
@@ -108,24 +109,50 @@ namespace RPGMapGeneration
         {
             MapGenerationSettings settings = MapGenerator.Settings;
 
+            BiomeField biomeField = RequireBiomeField();
+
             if (cachedSource == null
                 || !ReferenceEquals(cachedNoise, settings.TerrainNoise)
                 || !ReferenceEquals(cachedIsland, settings.Island)
+                || !ReferenceEquals(cachedField, biomeField)
                 || cachedSeed != settings.Seed
                 || cachedWorldSize != settings.World.Size)
             {
                 cachedNoise = settings.TerrainNoise;
                 cachedIsland = settings.Island;
+                cachedField = biomeField;
                 cachedSeed = settings.Seed;
                 cachedWorldSize = settings.World.Size;
 
                 cachedSource = new TerrainHeightSource(
                     cachedNoise,
                     new IslandMask(cachedIsland, cachedSeed, cachedWorldSize),
+                    cachedField,
+                    settings.BiomeProfiles,
                     cachedSeed);
             }
 
             return cachedSource;
+        }
+
+        /// <summary>
+        /// The biome field the terrain now reads its elevation bands from.
+        /// </summary>
+        /// <remarks>
+        /// Terrain used to be one global noise field and needed nothing from the biome pass, so
+        /// sampling a height before running it merely worked. Now that height depends on which
+        /// biome a position is in, the order is a requirement rather than a convention.
+        /// </remarks>
+        private static BiomeField RequireBiomeField()
+        {
+            BiomeField? field = BiomeGenerator.CurrentField;
+
+            if (field == null)
+            {
+                throw new System.InvalidOperationException("The biome pass has to run before terrain can be sampled, because height now depends on the biome. Call BiomeGenerator.InitializeTextureData or MapGenerator.Generate first.");
+            }
+
+            return field;
         }
     }
 }
