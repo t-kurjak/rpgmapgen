@@ -209,12 +209,36 @@ The defaults are the four the world is built from:
 
 | Biome | Base | Relief | Ceiling | Character |
 | --- | --- | --- | --- | --- |
+| swamp | 2 | 2.5 | 4.5 | low and flat |
 | plains | 8 | 6 | 14 | dry and level, heavily biased flat |
 | meadows | 16 | 40 | 56 | broad rolling hills |
-| mountains | 26 | 95 | 121 | ridged and terraced into eight shelves |
-| swamp | 2 | 2.5 | 4.5 | low and flat |
+| mountains | 48 | 76 | 124 | ridged and terraced into eight shelves |
 
-Measured over the island, those come out at means of 2.6, 7.8, 31.3 and 51.9 units.
+### The bands do not overlap
+
+`BaseElevation` is a biome's floor, since relief is never negative. The defaults are chosen so
+that each biome's floor clears the highest ground of the one below it. Measured inland, away
+from the shore ramp:
+
+| biome | floor | median | peak |
+| --- | --- | --- | --- |
+| swamp | 2.0 | 2.9 | 4.1 |
+| plains | 8.3 | 9.5 | 11.8 |
+| meadows | 23.6 | 35.5 | 44.8 |
+| mountains | 48.0 | 71.0 | 95.6 |
+
+That matters for anything keyed off elevation rather than biome - snow lines, thinning
+vegetation. With overlapping bands, mountain valleys sit below meadow hilltops and the rule
+puts snow in the wrong places.
+
+**The ordering is maintained by choosing these numbers, not enforced by the library.** If you
+retune a profile, check it: raising a `ReliefAmplitude` or lowering a `BaseElevation` can
+reintroduce an overlap silently. Note also that a profile's `Ceiling` is not the height it
+reaches - the mountains' ceiling is 124 but they top out near 96 - so comparing ceilings will
+mislead you. Measure the generated heights.
+
+The shore ramp is the deliberate exception: the island mask scales height towards zero at the
+coast, so coastal mountain ground does dip low. That is about 11% of the biome.
 
 A sample's height is the two profiles' heights mixed by the blend weight. The mixing happens
 on the finished heights, not on the noise parameters - interpolating frequencies across a

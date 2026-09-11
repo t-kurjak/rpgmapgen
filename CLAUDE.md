@@ -55,7 +55,7 @@ so regenerate and byte-compare:
 dotnet run --project rpgmapgen -- -o rpgmapgen/output/check.png -s 4096
 ```
 
-That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 98b2ba4d…` for the
+That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 0b6e4219…` for the
 default settings and a version 1 header). This is a *reproducibility* check, not a parity
 check against Unity: the same settings must always give the same bytes, because a tool's
 preview and the game's bake have to agree. A difference after a refactor that was meant to
@@ -251,11 +251,19 @@ Measured from the checked-in 4096 bake, so that these are not mistaken for desig
   buildable ground from 1.4% to 30%; `TerraceSteps` then added a further 10 points. Reach for
   the noise first and the terraces second. `TerraceStrength` barely moves buildability at all
   (20.7% at 0.5 against 23.6% at 0.9, measured on the baked texture) — it is a look control.
-- **Mountains no longer reach the top of the channel.** Easing `Ridged` to 0.65 and keeping
-  `ReliefBias = 2` caps the achieved peak near 86 of 127.5 units, though the profile's ceiling
-  is 121. That is deliberate: raising it back up widens the gap to the meadows again, which is
-  the contrast the defaults were tuned to close. Note that `DescribeWarnings` checks a
-  profile's *ceiling*, not the height it actually reaches, so it will not flag this.
+- **The biomes' elevation bands are ordered, and nothing enforces it.** `BaseElevation` is a
+  biome's floor, since relief is never negative, and the defaults are picked so each floor
+  clears the peak of the biome below: swamp 2.0–4.1, plains 8.3–11.8, meadows 23.6–44.8,
+  mountains 48.0–95.6 measured inland. Anything keyed off elevation rather than biome — a snow
+  line, thinning vegetation — breaks when the bands overlap, and they did: 23% of inland
+  mountain ground once sat below the tallest meadow. Retuning a `ReliefAmplitude` or a
+  `BaseElevation` can reintroduce that silently, so measure the generated heights after any
+  such change.
+- **A profile's `Ceiling` is not the height it reaches.** `BaseElevation + ReliefAmplitude` is
+  an upper bound the noise never attains — the mountains' ceiling is 124 but they top out near
+  96, because ridging and `ReliefBias` cap the achieved relief around 0.63 of its range.
+  `DescribeWarnings` checks the ceiling, so it will neither flag unused channel range nor catch
+  an overlap. Comparing ceilings to reason about ordering will mislead you.
 - **The bake is single threaded and getting slower.** Each step has added noise per sample;
   at 4096 it is now several minutes. `TerrainHeightSource` and `IslandMask` are pure by
   design, so `Parallel.For` over rows is the fix and needs no restructuring.

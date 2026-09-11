@@ -159,8 +159,17 @@ namespace RPGMapGeneration.Generation
                     Id = 2,
                     Name = "mountains",
                     PreviewColor = Color.FromBytes(150, 150, 158),
-                    BaseElevation = 26.0f,
-                    ReliefAmplitude = 95.0f,
+                    // High enough that the mountain floor clears the highest meadow. Without
+                    // that the two biomes overlap in height - 23% of inland mountain ground
+                    // used to sit below the tallest meadow - and anything keyed off elevation,
+                    // snow or thinning vegetation, ends up on the wrong ground.
+                    BaseElevation = 48.0f,
+
+                    // Trimmed to keep base + relief under the 127.5 the alpha channel encodes.
+                    // Costing the range here buys more than it loses: the peak rises from 86 to
+                    // 96 because the base contributes in full, and the gentler gradient leaves
+                    // more of the biome level.
+                    ReliefAmplitude = 76.0f,
 
                     // Broad massifs rather than a field of spikes. Feature size is what decides
                     // whether terracing can produce a shelf worth standing on: a tread is only
@@ -185,9 +194,9 @@ namespace RPGMapGeneration.Generation
                     // Squaring it digs the valleys back in.
                     ReliefBias = 2,
 
-                    // Eight shelves of about twelve units each. Measured over a 6x6 unit
-                    // footprint, 22% of the biome is now level to within 1.5 units and 41% to
-                    // within 3, against 0% and 1.4% before.
+                    // Eight shelves of about nine and a half units each. Measured over a 6x6
+                    // unit footprint, 43% of the inland biome is level to within 3 units,
+                    // against 1.4% before terracing.
                     TerraceSteps = 8,
                     TerraceStrength = 0.9f,
                     TerraceFlatness = 3
