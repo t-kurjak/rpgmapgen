@@ -201,6 +201,33 @@ The generation pipeline is three passes, and every one of them is an instance:
 nothing mutated — which is what makes previews at another resolution, partial re-bakes and
 parallel baking possible. Keep them that way.
 
+## Baking in parallel
+
+Both grid passes run their rows through `RowRunner`, which takes one row function and runs it
+either sequentially or through `Parallel.For`. There is deliberately only one copy of the
+arithmetic, so the two paths cannot drift apart.
+
+`BakeOptions` controls it and is kept separate from `MapGenerationSettings` on purpose:
+settings describe the *world*, and changing one changes the map; bake options describe the
+*run*, and changing one must not alter a single pixel. That property is asserted — parallel
+output is byte-compared against sequential across repeated runs and several thread counts, and
+the committed `testgen.png` hash was unchanged by the parallelisation.
+
+What makes it safe: every per-pixel input is a pure function of position, each row writes only
+its own slice of the output, and `UnityPerlin`'s tables are `static readonly`, filled in a
+static constructor (which the CLR runs exactly once) and only read afterwards. `UnityRandom` is
+mutable static state, but it is touched only by the region scatter, which runs before the grid
+passes and is not parallelised.
+
+The one piece of per-pixel scratch, the distance array in `BiomeFieldGenerator`, is allocated
+per row rather than per field precisely because rows may run concurrently. If you add scratch
+to a row body, do the same.
+
+Measured on 16 logical processors: 2048 in memory 6428 ms → 755 ms (8.5x); 4096 through the
+CLI 165 s → 35 s (4.7x, the difference being single-threaded PNG encoding). `--threads 1`
+forces the sequential path, which is the first thing to reach for if a bake ever disagrees
+with itself.
+
 `IslandMask.Measure()` samples the mask on a coarse grid and reports the land fraction and
 whether land touches the border. Prefer measuring to reasoning about the settings: the coast
 warp is fractal noise whose theoretical worst case is far outside what it ever reaches, so a
@@ -264,9 +291,9 @@ Measured from the checked-in 4096 bake, so that these are not mistaken for desig
   96, because ridging and `ReliefBias` cap the achieved relief around 0.63 of its range.
   `DescribeWarnings` checks the ceiling, so it will neither flag unused channel range nor catch
   an overlap. Comparing ceilings to reason about ordering will mislead you.
-- **The bake is single threaded and getting slower.** Each step has added noise per sample;
-  at 4096 it is now several minutes. `TerrainHeightSource` and `IslandMask` are pure by
-  design, so `Parallel.For` over rows is the fix and needs no restructuring.
+- **PNG encoding is now the serial floor of a bake.** Rows bake in parallel but `Imaging/Zlib`
+  compresses on one thread, which is why 4096 speeds up 4.7x while 2048 in memory speeds up
+  8.5x. Anything further wants attacking the encoder, not the generator.
 - **The blend byte only uses its lower half.** Biome A is always the nearer region, so the
   blend tops out at 0.5 (a stored 128) at a border and mirrors from the other side. That is
   continuous and correct, but a shader assuming a full 0..255 range will be wrong.

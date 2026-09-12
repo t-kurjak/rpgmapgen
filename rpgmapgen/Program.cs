@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using RPGMapGeneration;
 using RPGMapGeneration.Diagnostics;
+using RPGMapGeneration.Generation;
 
 namespace RPGMapGeneration.Cli
 {
@@ -89,9 +90,15 @@ namespace RPGMapGeneration.Cli
                     MapFormat.CurrentVersion));
             }
 
+            BakeOptions bakeOptions = new BakeOptions
+            {
+                UseMultipleThreads = options.Threads != 1,
+                MaximumThreads = options.Threads
+            };
+
             Stopwatch stopwatch = Stopwatch.StartNew();
 
-            MapGenerator.GenerateMap(options.OutputPath, options.TextureSize);
+            MapGenerator.Generate(options.TextureSize, bakeOptions).Save(options.OutputPath);
 
             stopwatch.Stop();
 
@@ -143,6 +150,8 @@ Options:
       --vertex-spacing <n>   World units between vertices. Default 8.
       --max-height <value>   Height that a stored alpha of 255 maps to. Default 127.5.
       --seed <n>             Seed for the biome region scatter. Default 12345.
+      --threads <n>          Threads to bake on. 0 lets the runtime decide (default),
+                             1 bakes on a single thread. Affects speed, never output.
       --biome-preview <path> Also write the human readable biome layout to this PNG.
   -q, --quiet                Suppress progress output.
   -h, --help                 Show this help.
@@ -169,6 +178,8 @@ Examples:
             public float MaxHeight { get; private set; } = MapGenerator.MaximumHeight;
 
             public int Seed { get; private set; } = MapGenerator.Seed;
+
+            public int Threads { get; private set; }
 
             public string? BiomePreviewPath { get; private set; }
 
@@ -225,6 +236,16 @@ Examples:
 
                         case "--seed":
                             options.Seed = ParseInt(NextValue(args, ref i, arg), arg);
+                            break;
+
+                        case "--threads":
+                            options.Threads = ParseInt(NextValue(args, ref i, arg), arg);
+
+                            if (options.Threads < 0)
+                            {
+                                throw new ArgumentException("'--threads' cannot be negative; use 0 to let the runtime decide.");
+                            }
+
                             break;
 
                         case "--biome-preview":

@@ -26,7 +26,7 @@ namespace RPGMapGeneration.Generation
         /// land, so that a region is never centred out at sea where it would reach the island
         /// only as a sliver, if at all.
         /// </summary>
-        public static BiomeField Generate(BiomeLayoutSettings settings, IslandMask island, int seed, int size, float worldSize)
+        public static BiomeField Generate(BiomeLayoutSettings settings, IslandMask island, int seed, int size, float worldSize, BakeOptions? options = null)
         {
             BiomeBlend[] blends = new BiomeBlend[size * size];
 
@@ -35,13 +35,16 @@ namespace RPGMapGeneration.Generation
             float sampleSpacing = worldSize / size;
             float halfExtent = worldSize * 0.5f;
 
-            // Reused across every pixel: the distorted distance to each region. Keeping them
-            // lets the two scans below - nearest of all, then nearest of a different biome -
-            // share one pass of Perlin lookups instead of doing them twice.
-            float[] distances = new float[regions.Count];
-
-            for (int z = 0; z < size; z++)
+            void BuildRow(int z)
             {
+                // Reused across the row: the distorted distance to each region. Keeping them
+                // lets the two scans below - nearest of all, then nearest of a different biome
+                // - share one pass of Perlin lookups instead of doing them twice.
+                //
+                // Allocated per row rather than once for the whole field, because rows may run
+                // concurrently and this is the one piece of scratch they would otherwise share.
+                float[] distances = new float[regions.Count];
+
                 for (int x = 0; x < size; x++)
                 {
                     // The same world position the bake will use for this pixel.
@@ -120,6 +123,8 @@ namespace RPGMapGeneration.Generation
                     blends[z * size + x] = new BiomeBlend(closestBiome, otherBiome, blend);
                 }
             }
+
+            RowRunner.Run(size, options, BuildRow);
 
             return new BiomeField(blends, size, worldSize, regions);
         }

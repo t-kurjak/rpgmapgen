@@ -81,7 +81,16 @@ namespace RPGMapGeneration
         /// </summary>
         public static TerrainMap Generate(int textureSize)
         {
-            TerrainMap map = TerrainMap.Generate(settings, textureSize, out BiomeField biomeField);
+            return Generate(textureSize, null);
+        }
+
+        /// <summary>
+        /// Generates from <see cref="Settings"/> with explicit control over how the machine is
+        /// used. The options change how long the bake takes, never what it produces.
+        /// </summary>
+        public static TerrainMap Generate(int textureSize, BakeOptions? options)
+        {
+            TerrainMap map = TerrainMap.Generate(settings, textureSize, out BiomeField biomeField, options);
 
             BiomeGenerator.SetCurrentField(biomeField);
 

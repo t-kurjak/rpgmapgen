@@ -87,7 +87,7 @@ namespace RPGMapGeneration
         /// </summary>
         /// <remarks>
         /// The biome field has to exist already: <see cref="BiomeGenerator.InitializeTextureData"/>
-        /// runs before a bake, and <see cref="MapGenerator.Generate"/> does both in order.
+        /// runs before a bake, and <see cref="MapGenerator.Generate(int)"/> does both in order.
         /// </remarks>
         public static TerrainMap GenerateTerrainNormalHeightTextureMap(int textureSize, float worldSize, float maxHeight = 50.0f)
         {

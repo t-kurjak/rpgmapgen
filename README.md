@@ -312,6 +312,34 @@ whichever way the pixels arrive.
 `RPGMapGeneration.Diagnostics.MapLog.Info` replaces `Debug.Log` and is silent until you
 assign a handler.
 
+## Baking in parallel
+
+Both grid passes bake their rows across threads by default. `BakeOptions` controls it:
+
+```csharp
+// Default: use the machine.
+TerrainMap map = TerrainMap.Generate(settings, 4096);
+
+// One thread, in row order - for a platform without threads, or to rule out
+// concurrency when chasing a difference in output.
+TerrainMap same = TerrainMap.Generate(settings, 4096, BakeOptions.Sequential);
+
+// Or leave some of the machine for something else.
+TerrainMap map2 = TerrainMap.Generate(settings, 4096, new BakeOptions { MaximumThreads = 4 });
+```
+
+From the CLI, `--threads 1` forces the sequential path and `--threads 0` (the default) lets the
+runtime decide.
+
+**Bake options change how long a bake takes, never what it produces.** They are kept out of
+`MapGenerationSettings` for that reason: a settings file describes a world, and should not
+record anything about the computer that last baked it. Parallel output is byte-compared against
+sequential across repeated runs and several thread counts.
+
+Measured on 16 logical processors: a 2048 bake in memory goes from 6428 ms to 755 ms, 8.5x. A
+4096 bake through the CLI goes from 165 s to 35 s, 4.7x - the smaller gain being the PNG
+encoder, which still compresses on one thread and is now the serial floor.
+
 ## Collider modifications
 
 `HeightTextureSampler.ApplyColliderModifications` used to walk `Collider[]`, filter out

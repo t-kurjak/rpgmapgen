@@ -71,14 +71,24 @@ namespace RPGMapGeneration
         /// <summary>Runs the biome pass and the terrain bake and returns the packed result.</summary>
         public static TerrainMap Generate(MapGenerationSettings settings, int textureSize)
         {
-            return Generate(settings, textureSize, out _);
+            return Generate(settings, textureSize, out _, null);
+        }
+
+        /// <summary>
+        /// Runs the biome pass and the terrain bake with explicit control over how the machine
+        /// is used. <paramref name="options"/> changes how long the bake takes, never what it
+        /// produces.
+        /// </summary>
+        public static TerrainMap Generate(MapGenerationSettings settings, int textureSize, BakeOptions? options)
+        {
+            return Generate(settings, textureSize, out _, options);
         }
 
         /// <summary>
         /// Runs the biome pass and the terrain bake, also handing back the biome field the bake
         /// used so a tool can preview or inspect it.
         /// </summary>
-        public static TerrainMap Generate(MapGenerationSettings settings, int textureSize, out BiomeField biomeField)
+        public static TerrainMap Generate(MapGenerationSettings settings, int textureSize, out BiomeField biomeField, BakeOptions? options = null)
         {
             if (settings == null)
             {
@@ -93,7 +103,7 @@ namespace RPGMapGeneration
 
             IslandMask island = new IslandMask(settings.Island, settings.Seed, worldSize);
 
-            biomeField = BiomeFieldGenerator.Generate(settings.BiomeLayout, island, settings.Seed, textureSize, worldSize);
+            biomeField = BiomeFieldGenerator.Generate(settings.BiomeLayout, island, settings.Seed, textureSize, worldSize, options);
 
             TerrainHeightSource heightSource = new TerrainHeightSource(
                 settings.TerrainNoise,
@@ -102,12 +112,12 @@ namespace RPGMapGeneration
                 settings.BiomeProfiles,
                 settings.Seed);
 
-            Color32[] baked = Bake(heightSource, biomeField, textureSize, worldSize, settings.World.MaximumHeight);
+            Color32[] baked = Bake(heightSource, biomeField, textureSize, worldSize, settings.World.MaximumHeight, options);
 
             return new TerrainMap(baked, textureSize, worldSize, settings.World.MaximumHeight, MapFormat.CurrentVersion);
         }
 
-        private static Color32[] Bake(TerrainHeightSource heightSource, BiomeField biomeField, int textureSize, float worldSize, float maximumHeight)
+        private static Color32[] Bake(TerrainHeightSource heightSource, BiomeField biomeField, int textureSize, float worldSize, float maximumHeight, BakeOptions? options)
         {
             // The bake reads the biome field by pixel rather than by world position, so the two
             // grids have to be the same. Mismatched sizes would otherwise stretch the biome
@@ -121,7 +131,9 @@ namespace RPGMapGeneration
 
             float sampleSpacing = worldSize / textureSize;
 
-            for (int z = 0; z < textureSize; z++)
+            // One row, written only into its own slice of the output and reading nothing that
+            // another row writes. Rows may therefore run in any order, or at once.
+            void BakeRow(int z)
             {
                 for (int x = 0; x < textureSize; x++)
                 {
@@ -143,6 +155,8 @@ namespace RPGMapGeneration
                         MapPacking.PackHeight(height, maximumHeight));
                 }
             }
+
+            RowRunner.Run(textureSize, options, BakeRow);
 
             // The first pixel gives up its map data to carry the format version instead.
             pixels[MapFormat.HeaderPixelIndex] = MapFormat.CreateHeader(MapFormat.CurrentVersion);
@@ -446,11 +460,11 @@ namespace RPGMapGeneration
         /// settings object, which is what the static facades need in order to keep the
         /// signatures they inherited from the Unity original.
         /// </summary>
-        internal static TerrainMap FromBake(TerrainHeightSource heightSource, BiomeField biomeField, int textureSize, float worldSize, float maximumHeight)
+        internal static TerrainMap FromBake(TerrainHeightSource heightSource, BiomeField biomeField, int textureSize, float worldSize, float maximumHeight, BakeOptions? options = null)
         {
             RequireHeaderRoom(textureSize);
 
-            Color32[] baked = Bake(heightSource, biomeField, textureSize, worldSize, maximumHeight);
+            Color32[] baked = Bake(heightSource, biomeField, textureSize, worldSize, maximumHeight, options);
 
             return new TerrainMap(baked, textureSize, worldSize, maximumHeight, MapFormat.CurrentVersion);
         }
