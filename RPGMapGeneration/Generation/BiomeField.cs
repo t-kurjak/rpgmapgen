@@ -22,13 +22,82 @@ namespace RPGMapGeneration.Generation
     {
         private readonly BiomeBlend[] blends;
 
-        internal BiomeField(BiomeBlend[] blends, int size, float worldSize, IReadOnlyList<BiomeRegion> regions)
+        private readonly IslandMask island;
+
+        internal BiomeField(BiomeBlend[] blends, int size, float worldSize, IReadOnlyList<BiomeRegion> regions, IslandMask island, byte oceanBiomeId)
         {
             this.blends = blends;
+            this.island = island;
 
             Size = size;
             WorldSize = worldSize;
             Regions = regions;
+            OceanBiomeId = oceanBiomeId;
+        }
+
+        /// <summary>
+        /// The id given to water. Carried here so that anything reading the field knows which
+        /// biome means "not land" without being told separately.
+        /// </summary>
+        public byte OceanBiomeId { get; }
+
+        /// <summary>
+        /// What the packed texture stores: the land layout with the ocean laid over it.
+        /// </summary>
+        /// <remarks>
+        /// Kept apart from the land layout on purpose. A pixel can only carry one biome pair,
+        /// so out on the shore ramp the choice is between saying "these two land biomes meet
+        /// here" and "this land meets the sea". The texture says the latter, because that is
+        /// what a shore material or a minimap needs; the terrain pass keeps reading the former,
+        /// because losing it would leave a seam wherever a biome border reaches the coast.
+        ///
+        /// The weight is the island mask itself, so the biome channel describes the coast over
+        /// exactly the width the height channel does.
+        /// </remarks>
+        public BiomeBlend GetSurfaceBlendAtPixel(int x, int z)
+        {
+            return ApplyOcean(GetBlendAtPixel(x, z), MaskAtPixel(x, z));
+        }
+
+        /// <summary>The surface blend, ocean included, at a world position.</summary>
+        public BiomeBlend SampleSurfaceBlend(float x, float z)
+        {
+            return ApplyOcean(SampleBlend(x, z), island.GetMask(x, z));
+        }
+
+        /// <summary>
+        /// The biome that owns more than half of a sample on the finished surface, the ocean
+        /// included. This is what the packed texture reads back as.
+        /// </summary>
+        public byte SampleDominantSurfaceBiome(float x, float z)
+        {
+            BiomeBlend blend = SampleSurfaceBlend(x, z);
+
+            return blend.blend < 0.5f ? blend.biomeA : blend.biomeB;
+        }
+
+        private BiomeBlend ApplyOcean(BiomeBlend land, float mask)
+        {
+            if (mask <= 0.0f)
+            {
+                return new BiomeBlend(OceanBiomeId, OceanBiomeId, 0.0f);
+            }
+
+            if (mask < 1.0f)
+            {
+                return new BiomeBlend(land.biomeA, OceanBiomeId, 1.0f - mask);
+            }
+
+            return land;
+        }
+
+        /// <summary>The island mask at the centre of a pixel of this field.</summary>
+        private float MaskAtPixel(int x, int z)
+        {
+            float spacing = WorldSize / Size;
+            float halfExtent = WorldSize * 0.5f;
+
+            return island.GetMask((x + 0.5f) * spacing - halfExtent, (z + 0.5f) * spacing - halfExtent);
         }
 
         /// <summary>Edge length of the field in pixels.</summary>
@@ -118,7 +187,9 @@ namespace RPGMapGeneration.Generation
             {
                 for (int x = 0; x < Size; x++)
                 {
-                    preview.SetPixel(x, z, palette[blends[z * Size + x].biomeA]);
+                    // The surface view, so the preview shows the coastline the texture carries
+                    // rather than the land layout continuing out under the sea.
+                    preview.SetPixel(x, z, palette[GetSurfaceBlendAtPixel(x, z).biomeA]);
                 }
             }
 

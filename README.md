@@ -182,6 +182,31 @@ Biome B is the nearest region carrying a *different* biome, not simply the secon
 region. Two neighbouring regions that share an id are one area as far as terrain is concerned,
 so the blend between them is zero and they read as continuous.
 
+### The ocean
+
+Everything the island mask calls water takes `BiomeLayoutSettings.OceanBiomeId` (default `4`).
+It is not a scattered region - it is wherever the land is not - so its id sits outside the
+`0 .. BiomeCount - 1` range regions are dealt from, and it needs a `BiomeProfile` like any
+other biome. It costs one of the sixteen ids a nibble can hold, leaving fifteen for land.
+
+Across the shore ramp the sample reads as the land biome crossing into the ocean, weighted by
+the mask itself, so the biome channel describes the coast over exactly the width the height
+channel does. That is also the only place the blend byte uses its upper half.
+
+The ocean is applied when the texture is packed, not baked into the layout. `BiomeField`
+therefore offers two views:
+
+| | |
+| --- | --- |
+| `SampleBlend`, `GetBlendAtPixel` | the land layout, with no ocean in it - what the terrain pass reads |
+| `SampleSurfaceBlend`, `GetSurfaceBlendAtPixel`, `SampleDominantSurfaceBiome` | the same with the ocean laid over it - what the packed texture carries |
+
+The split matters because a pixel can only carry one biome pair. On the shore the choice is
+between recording "these two land biomes meet here" and "this land meets the sea"; the texture
+records the latter. If the ocean were baked into the layout instead, the terrain pass would
+lose the land-to-land blend on the shore - a seam wherever a biome border reaches the coast -
+and would apply the island mask twice, steepening every beach.
+
 ## Biome terrain
 
 Each biome has a `BiomeProfile` saying what its ground does. This is what the biome pass is
@@ -209,6 +234,7 @@ The defaults are the four the world is built from:
 
 | Biome | Base | Relief | Ceiling | Character |
 | --- | --- | --- | --- | --- |
+| ocean | - | - | - | wherever the island mask says water; sea level by definition |
 | swamp | 2 | 2.5 | 4.5 | low and flat |
 | plains | 8 | 6 | 14 | dry and level, heavily biased flat |
 | meadows | 16 | 40 | 56 | broad rolling hills |

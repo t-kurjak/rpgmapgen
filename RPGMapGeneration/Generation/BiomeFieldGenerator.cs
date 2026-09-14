@@ -117,7 +117,8 @@ namespace RPGMapGeneration.Generation
 
                     // A is always the nearer region, so the blend never passes 0.5: at a border
                     // it reads 0.5 from both sides, with A and B swapped. That is continuous,
-                    // but it does mean the packed B channel only ever uses its lower half.
+                    // but it does mean the packed B channel only ever uses its lower half
+                    // between two land biomes.
                     float blend = 0.5f * boundaryBlend;
 
                     blends[z * size + x] = new BiomeBlend(closestBiome, otherBiome, blend);
@@ -126,7 +127,7 @@ namespace RPGMapGeneration.Generation
 
             RowRunner.Run(size, options, BuildRow);
 
-            return new BiomeField(blends, size, worldSize, regions);
+            return new BiomeField(blends, size, worldSize, regions, island, settings.OceanBiomeId);
         }
 
         /// <summary>

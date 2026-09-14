@@ -55,7 +55,7 @@ so regenerate and byte-compare:
 dotnet run --project rpgmapgen -- -o rpgmapgen/output/check.png -s 4096
 ```
 
-That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 0b6e4219…` for the
+That reproduces `rpgmapgen/output/testgen.png` byte for byte (`sha256 552b8af2…` for the
 default settings and a version 1 header). This is a *reproducibility* check, not a parity
 check against Unity: the same settings must always give the same bytes, because a tool's
 preview and the game's bake have to agree. A difference after a refactor that was meant to
@@ -179,6 +179,17 @@ The generation pipeline is three passes, and every one of them is an instance:
    step over a quarter of a world unit. Asking for the nearest *other* biome makes two
    neighbouring regions that share an id behave as the single area they visually are, and the
    blend falls continuously to zero when nothing different is nearby.
+   **The ocean is a label, not a region.** It is wherever the island mask says water, so its
+   id (`OceanBiomeId`, default 4) sits outside the range regions are dealt from and needs a
+   profile of its own. Crucially it lives in `BiomeField.GetSurfaceBlendAtPixel`, applied when
+   the texture is packed — `SampleBlend` and `GetBlendAtPixel` stay the pure land layout,
+   because that is what the terrain pass reads.
+
+   That split is load-bearing. A pixel carries one biome pair, so on the shore ramp the choice
+   is between "these two land biomes meet" and "this land meets the sea". Putting the ocean
+   into the field itself made the terrain pass lose the land-to-land blend there — a seam
+   wherever a biome border reaches the coast, measured as 509,696 changed height pixels — and
+   applied the mask twice. Packing-time only: height and normals came out bit-identical.
 3. **`TerrainHeightSource`** — what the ground does in each biome. Every biome has a
    `BiomeProfile` giving it an elevation band (`BaseElevation` plus `ReliefAmplitude`) and a
    character (`NoiseScale`, `Octaves`, `Ridged`, `ReliefBias`). A sample's height is the two
@@ -294,9 +305,11 @@ Measured from the checked-in 4096 bake, so that these are not mistaken for desig
 - **PNG encoding is now the serial floor of a bake.** Rows bake in parallel but `Imaging/Zlib`
   compresses on one thread, which is why 4096 speeds up 4.7x while 2048 in memory speeds up
   8.5x. Anything further wants attacking the encoder, not the generator.
-- **The blend byte only uses its lower half.** Biome A is always the nearer region, so the
-  blend tops out at 0.5 (a stored 128) at a border and mirrors from the other side. That is
-  continuous and correct, but a shader assuming a full 0..255 range will be wrong.
+- **The blend byte means two different ranges depending on the pair.** Between two land
+  biomes A is always the nearer region, so the blend tops out at 0.5 (a stored 128) at a
+  border and mirrors from the other side. Between land and ocean it is the island mask, and
+  runs the full 0..255 to pure sea. Both are correct readings of "0 = all A, 255 = all B";
+  just do not infer the land case's cap as a property of the channel.
 
 ## Conventions
 

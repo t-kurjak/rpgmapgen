@@ -60,6 +60,24 @@ namespace RPGMapGeneration.Generation
         public bool RequireLandSeeds = true;
 
         /// <summary>
+        /// Biome id given to everything the island mask calls water.
+        /// </summary>
+        /// <remarks>
+        /// The ocean is not a scattered region - it is wherever the land is not - so its id sits
+        /// outside the <c>0</c> .. <see cref="BiomeCount"/> minus one range that regions are
+        /// dealt from, and it needs a <see cref="BiomeProfile"/> of its own.
+        ///
+        /// Without it the sea carried whichever land region happened to be nearest, so the only
+        /// thing in the packed texture saying "this is water" was a height of zero. Anything
+        /// reading the biome channel - a shore material, a minimap, a rule about where not to
+        /// spawn - had to infer the coastline from elevation instead of being told.
+        ///
+        /// It costs one of the sixteen ids the G channel's nibble can hold, leaving fifteen for
+        /// land.
+        /// </remarks>
+        public byte OceanBiomeId = 4;
+
+        /// <summary>
         /// Rejection sampling attempts allowed per requested region before the scatter gives
         /// up. Giving up yields fewer regions than <see cref="RegionCount"/> asked for, which
         /// is reported through <see cref="Diagnostics.MapLog"/>.
@@ -78,6 +96,7 @@ namespace RPGMapGeneration.Generation
                 BlendWidth = BlendWidth,
                 MinimumSeparation = MinimumSeparation,
                 RequireLandSeeds = RequireLandSeeds,
+                OceanBiomeId = OceanBiomeId,
                 MaximumAttemptsPerRegion = MaximumAttemptsPerRegion
             };
         }

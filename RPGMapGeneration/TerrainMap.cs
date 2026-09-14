@@ -144,7 +144,7 @@ namespace RPGMapGeneration
 
                     // The field was built on this same grid, so take the pixel straight
                     // rather than mapping a world position back onto it and rounding twice.
-                    BiomeBlend biomeBlend = biomeField.GetBlendAtPixel(x, z);
+                    BiomeBlend biomeBlend = biomeField.GetSurfaceBlendAtPixel(x, z);
 
                     float height = heightSource.GetHeight(worldX, worldZ);
 

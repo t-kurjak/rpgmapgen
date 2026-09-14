@@ -97,6 +97,11 @@ namespace RPGMapGeneration.Generation
 
             // Away from a border there is nothing to blend towards, and skipping the second
             // profile there is what keeps the bake affordable.
+            //
+            // SampleBlend is the land layout, never the ocean: the sea is applied when the
+            // texture is packed, not here. Were the shore to report a land-to-ocean pair
+            // instead, this would lose the land-to-land blend underneath it - a seam wherever a
+            // biome border reaches the coast - and the mask below would be applied twice.
             if (blend.blend > 0.0f && blend.biomeB != blend.biomeA)
             {
                 float other = Evaluate(profilesById[blend.biomeB], x, z);

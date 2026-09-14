@@ -214,6 +214,25 @@ namespace RPGMapGeneration.Generation
                     Lacunarity = 2.0f,
                     Ridged = 0.0f,
                     ReliefBias = 2
+                },
+                new BiomeProfile
+                {
+                    Id = 4,
+                    Name = "ocean",
+                    PreviewColor = Color.FromBytes(28, 52, 104),
+
+                    // Sea level, flat, and never actually evaluated: the ocean is not a region
+                    // the terrain pass blends towards, it is where the island mask has already
+                    // taken the height to nothing. These values exist so the id has a profile
+                    // and a colour like any other.
+                    BaseElevation = 0.0f,
+                    ReliefAmplitude = 0.0f,
+                    NoiseScale = 0.004f,
+                    Octaves = 1,
+                    Persistence = 0.5f,
+                    Lacunarity = 2.0f,
+                    Ridged = 0.0f,
+                    ReliefBias = 1
                 }
             };
         }

@@ -213,6 +213,21 @@ namespace RPGMapGeneration.Generation
                     throw new ArgumentException($"The layout can produce biome {id} but no profile describes it, so that part of the map would take another biome's terrain.", nameof(BiomeProfiles));
                 }
             }
+
+            if (BiomeLayout.OceanBiomeId > MaximumBiomeId)
+            {
+                throw new ArgumentOutOfRangeException(nameof(BiomeLayout), $"The ocean's id {BiomeLayout.OceanBiomeId} is above {MaximumBiomeId}, and the packed texture stores an id in a nibble.");
+            }
+
+            if (BiomeLayout.OceanBiomeId < BiomeLayout.BiomeCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(BiomeLayout), $"The ocean's id {BiomeLayout.OceanBiomeId} is inside the 0..{BiomeLayout.BiomeCount - 1} range that land regions are dealt from, so a land biome and the sea would share an id.");
+            }
+
+            if (!seen[BiomeLayout.OceanBiomeId])
+            {
+                throw new ArgumentException($"The ocean uses biome {BiomeLayout.OceanBiomeId} but no profile describes it; every water pixel would take another biome's colour and name.", nameof(BiomeProfiles));
+            }
         }
 
         /// <summary>
