@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using RPGMapGeneration.Numerics;
 
@@ -8,15 +9,19 @@ namespace RPGMapGeneration.Generation
     /// biome borders and sunk into the sea by an <see cref="IslandMask"/>.
     /// </summary>
     /// <remarks>
-    /// This is the pass that makes the biome layout mean something. Each sample carries a pair
-    /// of biomes and a weight between them, so the surface is the two profiles' heights mixed
-    /// by that weight.
+    /// This is the pass that makes the biome layout mean something. Each sample carries a weight
+    /// per biome, so the surface is every covering profile's height mixed by those weights.
     ///
     /// The mixing happens on the finished heights, not on the noise parameters. Interpolating
     /// frequencies instead would make the noise swim and shift phase across a border; mixing
     /// outputs is stable, and it is what turns what would be a cliff at every biome edge into a
-    /// slope. The cost is two noise evaluations per sample, so the second one is skipped
-    /// wherever the blend is zero - which is most of the map, since transitions are narrow.
+    /// slope. The cost is one noise evaluation per covering biome, and biomes with no weight are
+    /// skipped - which is all but one of them over most of the map, since transitions are narrow.
+    ///
+    /// It mixes over the weights rather than over a chosen pair because a pair cannot describe a
+    /// point where three regions meet. Naming two of the three means dropping one, and which one
+    /// gets dropped flips across a line running out of the junction - a step of up to 46 world
+    /// units between neighbouring samples, against 7 for ordinary ground.
     ///
     /// Every method here is a pure function of the settings handed to the constructor and the
     /// position asked about. Nothing is cached and nothing is mutated, which is what lets a
@@ -91,22 +96,27 @@ namespace RPGMapGeneration.Generation
                 return 0.0f;
             }
 
-            BiomeBlend blend = biomes.SampleBlend(x, z);
+            // The land layout, never the ocean: the sea is applied when the texture is packed,
+            // not here, or the mask below would be applied twice.
+            ReadOnlySpan<float> weights = biomes.SampleWeights(x, z);
 
-            float height = Evaluate(profilesById[blend.biomeA], x, z);
+            float height = 0.0f;
 
-            // Away from a border there is nothing to blend towards, and skipping the second
-            // profile there is what keeps the bake affordable.
-            //
-            // SampleBlend is the land layout, never the ocean: the sea is applied when the
-            // texture is packed, not here. Were the shore to report a land-to-ocean pair
-            // instead, this would lose the land-to-land blend underneath it - a seam wherever a
-            // biome border reaches the coast - and the mask below would be applied twice.
-            if (blend.blend > 0.0f && blend.biomeB != blend.biomeA)
+            // Every biome that covers any part of this sample, in its own right rather than
+            // through a chosen pair. Away from a border exactly one weight is non zero, so the
+            // common case is still a single profile evaluation and the bake stays affordable;
+            // three or four only overlap on a couple of percent of the map, around the points
+            // where regions meet - which is exactly where naming a pair used to fail.
+            for (int biomeId = 0; biomeId < weights.Length; biomeId++)
             {
-                float other = Evaluate(profilesById[blend.biomeB], x, z);
+                float weight = weights[biomeId];
 
-                height = Mathf.Lerp(height, other, blend.blend);
+                if (weight <= 0.0f)
+                {
+                    continue;
+                }
+
+                height += weight * Evaluate(profilesById[biomeId], x, z);
             }
 
             return height * mask;

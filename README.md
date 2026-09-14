@@ -178,9 +178,21 @@ skeleton rather than only its result. The scatter can place fewer regions than a
 the island has no room; it says so through `MapLog` rather than failing, and `RegionCount`
 reports what it managed.
 
-Biome B is the nearest region carrying a *different* biome, not simply the second nearest
-region. Two neighbouring regions that share an id are one area as far as terrain is concerned,
-so the blend between them is zero and they read as continuous.
+The field stores a weight per biome rather than a resolved pair. `GetWeightsAtPixel` and
+`SampleWeights` return one normalised weight per land biome, indexed by biome id: each biome is
+weighed by how far behind the nearest one its own nearest region falls, fading out over
+`BlendWidth`. Regions collapse onto their biome id in the process, so two neighbouring regions
+that share an id are one area, as they visually are.
+
+Weights rather than a pair is what keeps the terrain continuous where three regions meet. A
+pair has to drop one of the three, and which one it drops flips across a line running out of
+the junction - putting a step of up to 46 world units into the terrain across a single pixel,
+against 7 for ordinary ground. A weight has no identity to flip; it goes to zero instead. The
+pair accessors derive the heaviest two on demand, for the texture, which has only two slots.
+
+That reduction is still lossy at a three-way junction, and no choice rule avoids it: two slots
+cannot represent three biomes. What is left is a colour seam on roughly 0.1% of pixel pairs,
+best hidden by offsetting the biome lookup with a small tiling noise in the shader.
 
 ### The ocean
 
@@ -189,23 +201,29 @@ It is not a scattered region - it is wherever the land is not - so its id sits o
 `0 .. BiomeCount - 1` range regions are dealt from, and it needs a `BiomeProfile` like any
 other biome. It costs one of the sixteen ids a nibble can hold, leaving fifteen for land.
 
-Across the shore ramp the sample reads as the land biome crossing into the ocean, weighted by
-the mask itself, so the biome channel describes the coast over exactly the width the height
-channel does. That is also the only place the blend byte uses its upper half.
+Across the shore the sea weighs `1 - mask` and competes with the land biomes, whose weights are
+scaled by `mask`; the heaviest two win the pixel. It is not simply handed the second slot. At
+the inner edge of the shore the water is worth a fraction of a percent, and taking the slot
+there threw the land pair away across the whole band, leaving every biome border that reaches
+the coast as a hard edge - the largest colour step anywhere on the map.
 
 The ocean is applied when the texture is packed, not baked into the layout. `BiomeField`
 therefore offers two views:
 
 | | |
 | --- | --- |
-| `SampleBlend`, `GetBlendAtPixel` | the land layout, with no ocean in it - what the terrain pass reads |
-| `SampleSurfaceBlend`, `GetSurfaceBlendAtPixel`, `SampleDominantSurfaceBiome` | the same with the ocean laid over it - what the packed texture carries |
+| `SampleWeights`, `GetWeightsAtPixel` | per-biome weights for the land layout - what the terrain pass reads |
+| `SampleBlend`, `GetBlendAtPixel` | the heaviest two of those, with no ocean in them |
+| `SampleSurfaceBlend`, `GetSurfaceBlendAtPixel`, `SampleDominantSurfaceBiome` | the heaviest two once the sea competes - what the packed texture carries |
 
-The split matters because a pixel can only carry one biome pair. On the shore the choice is
-between recording "these two land biomes meet here" and "this land meets the sea"; the texture
-records the latter. If the ocean were baked into the layout instead, the terrain pass would
-lose the land-to-land blend on the shore - a seam wherever a biome border reaches the coast -
-and would apply the island mask twice, steepening every beach.
+The split matters because a pixel can only carry two biomes. On the shore the choice is between
+recording "these two land biomes meet here" and "this land meets the sea". If the ocean were
+baked into the layout instead, the terrain pass would apply the island mask twice, steepening
+every beach.
+
+In every view A is the heavier of the two, so the blend never passes 0.5 - a stored 128 - and
+mirrors from the other side of a border. Water is read from biome id 4, never from a blend
+approaching 255.
 
 ## Biome terrain
 
@@ -266,10 +284,15 @@ mislead you. Measure the generated heights.
 The shore ramp is the deliberate exception: the island mask scales height towards zero at the
 coast, so coastal mountain ground does dip low. That is about 11% of the biome.
 
-A sample's height is the two profiles' heights mixed by the blend weight. The mixing happens
-on the finished heights, not on the noise parameters - interpolating frequencies across a
-border makes the noise swim and shift phase, while interpolating outputs is stable and is what
-turns what would be a cliff at every biome edge into a slope.
+A sample's height is every covering profile's height mixed by the field's weights - the
+weights, not the pair, because the terrain has no two-slot limit to respect. The mixing happens
+on the finished heights, not on the noise parameters: interpolating frequencies across a border
+makes the noise swim and shift phase, while interpolating outputs is stable and is what turns
+what would be a cliff at every biome edge into a slope.
+
+Biomes with no weight are skipped, so on the defaults this costs 1.304 profile evaluations per
+land pixel - 72.6% of land needs one, 24.4% two, and 3.0% three, around the points where
+regions meet.
 
 `BlendWidth` on the layout therefore controls how far a mountain front has to climb, not just
 how the texture looks. At the default 50 units a mountains/plains boundary is an escarpment;

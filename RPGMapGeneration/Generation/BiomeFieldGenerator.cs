@@ -6,15 +6,17 @@ using RPGMapGeneration.Numerics;
 namespace RPGMapGeneration.Generation
 {
     /// <summary>
-    /// Scatters biome regions across the island and resolves every pixel to the two nearest of
-    /// them.
+    /// Scatters biome regions across the island and weighs every pixel against all of them.
     /// </summary>
     /// <remarks>
     /// The regions are a Voronoi diagram whose distances are pushed around by Perlin noise, so
-    /// the borders wander instead of being straight bisectors. Keeping the second nearest
-    /// region as well as the nearest is what gives a sample its biome <em>pair</em>, and the
-    /// gap between the two distances is what gives it a blend weight: the gap closes to nothing
-    /// at a border and widens towards the middle of a region.
+    /// the borders wander instead of being straight bisectors. Each biome is then weighed by how
+    /// far behind the nearest one it falls: level with it at a border, fading to nothing over
+    /// <see cref="BiomeLayoutSettings.BlendWidth"/> towards the middle of a region.
+    ///
+    /// Weighing every biome rather than naming the nearest two is what keeps the result
+    /// continuous where three regions meet. A pair has to drop one of the three, and which one
+    /// it drops flips across a line running out of the junction; a weight simply goes to zero.
     ///
     /// Everything is computed in world units, so the layout does not change when the same world
     /// is baked at a different resolution.
@@ -28,7 +30,9 @@ namespace RPGMapGeneration.Generation
         /// </summary>
         public static BiomeField Generate(BiomeLayoutSettings settings, IslandMask island, int seed, int size, float worldSize, BakeOptions? options = null)
         {
-            BiomeBlend[] blends = new BiomeBlend[size * size];
+            int biomeCount = settings.BiomeCount;
+
+            float[] weights = new float[size * size * biomeCount];
 
             List<BiomeRegion> regions = ScatterRegions(settings, island, seed, worldSize);
 
@@ -37,19 +41,25 @@ namespace RPGMapGeneration.Generation
 
             void BuildRow(int z)
             {
-                // Reused across the row: the distorted distance to each region. Keeping them
-                // lets the two scans below - nearest of all, then nearest of a different biome
-                // - share one pass of Perlin lookups instead of doing them twice.
+                // Reused across the row: the distance to the nearest region carrying each biome.
+                // Collapsing regions onto their biome here is what makes two neighbouring
+                // regions that share an id behave as one area, without the field ever having to
+                // name a region.
                 //
                 // Allocated per row rather than once for the whole field, because rows may run
                 // concurrently and this is the one piece of scratch they would otherwise share.
-                float[] distances = new float[regions.Count];
+                float[] nearest = new float[biomeCount];
 
                 for (int x = 0; x < size; x++)
                 {
                     // The same world position the bake will use for this pixel.
                     float worldX = (x + 0.5f) * sampleSpacing - halfExtent;
                     float worldZ = (z + 0.5f) * sampleSpacing - halfExtent;
+
+                    for (int b = 0; b < biomeCount; b++)
+                    {
+                        nearest[b] = float.MaxValue;
+                    }
 
                     for (int r = 0; r < regions.Count; r++)
                     {
@@ -64,70 +74,55 @@ namespace RPGMapGeneration.Generation
                             worldX * settings.BorderNoiseScale + region.Position.x * settings.BorderNoiseOffsetScale,
                             worldZ * settings.BorderNoiseScale + region.Position.y * settings.BorderNoiseOffsetScale);
 
-                        distances[r] = distance + (noise - 0.5f) * settings.BorderDistortion;
-                    }
+                        distance += (noise - 0.5f) * settings.BorderDistortion;
 
-                    // Nearest region of all decides which biome the sample is in.
-                    int closest = 0;
-
-                    for (int r = 1; r < regions.Count; r++)
-                    {
-                        if (distances[r] < distances[closest])
+                        if (distance < nearest[region.BiomeId])
                         {
-                            closest = r;
+                            nearest[region.BiomeId] = distance;
                         }
                     }
 
-                    byte closestBiome = regions[closest].BiomeId;
+                    float closest = float.MaxValue;
 
-                    // The one to blend towards is the nearest region carrying a *different*
-                    // biome, not simply the second nearest region. Two neighbouring regions
-                    // that share a biome are one area as far as terrain is concerned, and
-                    // asking for the runner-up instead would make the pair - and with it the
-                    // height - jump the moment the runner-up changed identity.
-                    int nearestOther = -1;
-
-                    for (int r = 0; r < regions.Count; r++)
+                    for (int b = 0; b < biomeCount; b++)
                     {
-                        if (regions[r].BiomeId == closestBiome)
+                        if (nearest[b] < closest)
                         {
-                            continue;
-                        }
-
-                        if (nearestOther < 0 || distances[r] < distances[nearestOther])
-                        {
-                            nearestOther = r;
+                            closest = nearest[b];
                         }
                     }
 
-                    byte otherBiome = closestBiome;
+                    // Every biome gets a weight from how far behind the nearest one it is,
+                    // fading out over BlendWidth. There is no argmax anywhere in this, which is
+                    // the whole point: a weight can go to zero smoothly, where a choice of which
+                    // biome to name can only flip.
+                    int offset = (z * size + x) * biomeCount;
 
-                    float boundaryBlend = 0.0f;
+                    float total = 0.0f;
 
-                    if (nearestOther >= 0)
+                    for (int b = 0; b < biomeCount; b++)
                     {
-                        otherBiome = regions[nearestOther].BiomeId;
+                        float weight = nearest[b] == float.MaxValue
+                            ? 0.0f
+                            : Mathf.SmoothStep(0.0f, 1.0f, Mathf.InverseLerp(settings.BlendWidth, 0.0f, nearest[b] - closest));
 
-                        float distanceDifference = distances[nearestOther] - distances[closest];
+                        weights[offset + b] = weight;
 
-                        boundaryBlend = Mathf.InverseLerp(settings.BlendWidth, 0.0f, distanceDifference);
-
-                        boundaryBlend = Mathf.SmoothStep(0.0f, 1.0f, boundaryBlend);
+                        total += weight;
                     }
 
-                    // A is always the nearer region, so the blend never passes 0.5: at a border
-                    // it reads 0.5 from both sides, with A and B swapped. That is continuous,
-                    // but it does mean the packed B channel only ever uses its lower half
-                    // between two land biomes.
-                    float blend = 0.5f * boundaryBlend;
-
-                    blends[z * size + x] = new BiomeBlend(closestBiome, otherBiome, blend);
+                    // The nearest biome always weighs exactly one, so the total can never be
+                    // zero as long as a single region was placed.
+                    for (int b = 0; b < biomeCount; b++)
+                    {
+                        weights[offset + b] /= total;
+                    }
                 }
             }
 
             RowRunner.Run(size, options, BuildRow);
 
-            return new BiomeField(blends, size, worldSize, regions, island, settings.OceanBiomeId);
+            return new BiomeField(weights, biomeCount, size, worldSize, regions, island, settings.OceanBiomeId);
         }
 
         /// <summary>

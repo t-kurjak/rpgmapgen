@@ -172,33 +172,56 @@ The generation pipeline is three passes, and every one of them is an instance:
    `BiomeField.Regions` exposes the seeds so a tool can show the layout's skeleton, not just
    its result.
 
-   **Biome B is the nearest region with a *different* id, not the second nearest region.**
-   That distinction is load-bearing now that height depends on the blend. Taking the runner-up
-   and zeroing the blend when the two ids matched — which is what this did at first — makes the
-   pair change identity discontinuously, and the height jumps with it: a measured 17.6 unit
-   step over a quarter of a world unit. Asking for the nearest *other* biome makes two
-   neighbouring regions that share an id behave as the single area they visually are, and the
-   blend falls continuously to zero when nothing different is nearby.
+   **The field stores a weight per biome, not a resolved pair.** `GetWeightsAtPixel` returns
+   `BiomeCount` normalised weights indexed by biome id, each biome weighed by how far behind
+   the nearest one its own nearest region falls, fading out over `BlendWidth`. Regions collapse
+   onto their biome id here, so two neighbouring regions sharing an id behave as the single
+   area they visually are. The pair accessors derive the heaviest two on demand.
+
+   This is the fix for tri-intersections, and it is why there is no argmax anywhere in the
+   generator. A pair has to drop one of the three biomes meeting at a junction, and *which* one
+   it drops flips across a line running out of that junction — the two candidates are
+   equidistant on that line, so the blend value is continuous while the identity snaps. That
+   put a measured **46.4 unit step into the terrain across a single pixel**, against 7.1 for
+   ordinary ground, on 445 pixels. A weight has no identity to flip and simply goes to zero:
+   worst step is now 9.6 units, which is just steep mountain, and zero pixels crack by over 12.
+
+   Costs `Size * Size * BiomeCount` floats — 16 MB for a 1024 field over four biomes, against
+   8 MB for the pairs it replaced.
+
+   **A pair still cannot describe a three-way point, and no sampling rule can fix that.**
+   Fading the blend out where the second and third are tied only rotates the three seams onto
+   the A|B edges instead. Only the *layout* can help, by making the three regions at a junction
+   not be three different biomes: of 23 junctions on the default map 8 are "rainbow", the best
+   balanced recolouring reaches 2, and zero is not attainable. Not implemented — the residual
+   is colour-only now, and is better hidden by raggedising the lookup in the shader.
+
    **The ocean is a label, not a region.** It is wherever the island mask says water, so its
    id (`OceanBiomeId`, default 4) sits outside the range regions are dealt from and needs a
-   profile of its own. Crucially it lives in `BiomeField.GetSurfaceBlendAtPixel`, applied when
-   the texture is packed — `SampleBlend` and `GetBlendAtPixel` stay the pure land layout,
-   because that is what the terrain pass reads.
+   profile of its own. It lives in `BiomeField.GetSurfaceBlendAtPixel`, applied when the
+   texture is packed — `SampleWeights`, `SampleBlend` and `GetBlendAtPixel` stay the pure land
+   layout, because that is what the terrain pass reads. Putting it into the field itself
+   applied the mask twice and cost 509,696 changed height pixels.
 
-   That split is load-bearing. A pixel carries one biome pair, so on the shore ramp the choice
-   is between "these two land biomes meet" and "this land meets the sea". Putting the ocean
-   into the field itself made the terrain pass lose the land-to-land blend there — a seam
-   wherever a biome border reaches the coast, measured as 509,696 changed height pixels — and
-   applied the mask twice. Packing-time only: height and normals came out bit-identical.
+   **The sea competes for a slot on weight; it is not handed one.** It weighs `1 - mask`
+   against the land weights scaled by `mask`, and the heaviest two win. Always giving it slot B
+   — which is what this did at first — threw the land pair away across the *whole* shore band,
+   including at the inner edge where the water is worth a fraction of a percent. Every biome
+   border reaching the coast became a hard edge there: the largest colour step anywhere on the
+   map, 106/255, now 88 and confined to genuine three-way points.
 3. **`TerrainHeightSource`** — what the ground does in each biome. Every biome has a
    `BiomeProfile` giving it an elevation band (`BaseElevation` plus `ReliefAmplitude`) and a
-   character (`NoiseScale`, `Octaves`, `Ridged`, `ReliefBias`). A sample's height is the two
-   profiles' heights mixed by the blend weight.
+   character (`NoiseScale`, `Octaves`, `Ridged`, `ReliefBias`). A sample's height is every
+   covering profile's height mixed by the field's weights.
 
    **Mix the finished heights, never the noise parameters.** Interpolating frequencies across
    a border makes the noise swim and shift phase; interpolating outputs is stable and is what
-   turns a cliff at every biome edge into a slope. The cost is two noise evaluations per
-   sample, so the second is skipped where the blend is zero — about 72% of the land.
+   turns a cliff at every biome edge into a slope.
+
+   **Read the weights, never the pair.** The pair is a texture format concession; the terrain
+   has no two-slot limit and taking one cost it a 46 unit cliff at every three-way junction.
+   Biomes with zero weight are skipped, so the cost is 1.304 profile evaluations per land pixel
+   on the defaults: 72.6% of land needs one, 24.4% two, 3.0% three, none four.
 
    `BiomeLayoutSettings.BlendWidth` is now a terrain control, not just a texture one: it sets
    how far a mountain front has to climb. At the default 50 units a mountains/plains boundary
@@ -305,11 +328,12 @@ Measured from the checked-in 4096 bake, so that these are not mistaken for desig
 - **PNG encoding is now the serial floor of a bake.** Rows bake in parallel but `Imaging/Zlib`
   compresses on one thread, which is why 4096 speeds up 4.7x while 2048 in memory speeds up
   8.5x. Anything further wants attacking the encoder, not the generator.
-- **The blend byte means two different ranges depending on the pair.** Between two land
-  biomes A is always the nearer region, so the blend tops out at 0.5 (a stored 128) at a
-  border and mirrors from the other side. Between land and ocean it is the island mask, and
-  runs the full 0..255 to pure sea. Both are correct readings of "0 = all A, 255 = all B";
-  just do not infer the land case's cap as a property of the channel.
+- **The blend byte never exceeds 128, land or coast.** A is always the *heavier* of the two
+  biomes, so the blend tops out at 0.5 at a border and mirrors from the other side — which is
+  what keeps it continuous there, since a linear blend is symmetric at a half. This changed
+  when the sea started competing for a slot on weight: it used to be handed slot B outright and
+  the land-to-ocean blend ran the full 0..255. Anything that inferred water from a blend near
+  255 will now never see one, and should read biome id 4 instead.
 
 ## Conventions
 
